@@ -367,6 +367,19 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     } catch {}
     return true;
   });
+  // 双击 .md 文件外部打开时，是否展开侧栏并自动切换到大纲视图（默认开启）
+  const [expandOutlineOnOpen, setExpandOutlineOnOpen] = useState(() => {
+    try {
+      const raw = localStorage.getItem("zmd-general-settings");
+      if (raw) {
+        const s = JSON.parse(raw);
+        return s.expandOutlineOnOpen ?? true;
+      }
+    } catch {}
+    return true;
+  });
+  // 传递给 Sidebar 的"切到大纲"触发器（每次自增促使 Sidebar 切 tab）
+  const [outlineTrigger, setOutlineTrigger] = useState(0);
   // Ctrl+滚轮调整字号时的右上角提示（停止滚动 1.5s 后自动消失）
   const [fontSizeToast, setFontSizeToast] = useState<number | null>(null);
   const fontSizeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -450,6 +463,9 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
           }
           if (typeof settings.irLineNumbers === 'boolean') {
             setIrLineNumbers(settings.irLineNumbers);
+          }
+          if (typeof settings.expandOutlineOnOpen === 'boolean') {
+            setExpandOutlineOnOpen(settings.expandOutlineOnOpen);
           }
         }
       } catch {}
@@ -1268,10 +1284,14 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   }, [modified]);
 
   // 处理系统文件关联打开（双击 .md 文件）：
-  // 折叠侧栏（与新窗口打开体验一致），激活文件所属仓库，然后打开文件
+  // 默认折叠侧栏（与新窗口打开体验一致）；若开启"启动时展开大纲"，则展开侧栏并切到大纲
   const handleExternalOpenFile = useCallback((filePath: string) => {
-    // 折叠侧栏
-    setSidebarOpen(false);
+    if (expandOutlineOnOpen) {
+      setSidebarOpen(true);
+      setOutlineTrigger((n) => n + 1);
+    } else {
+      setSidebarOpen(false);
+    }
 
     // 如果文件位于已注册仓库内，激活对应仓库（文件树选中状态、链接索引等随之生效）
     const normalize = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -1285,7 +1305,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     }
 
     handleSelectFile(filePath);
-  }, [vaults, handleSelectFile]);
+  }, [vaults, handleSelectFile, expandOutlineOnOpen]);
 
   // 拉取并处理外部打开文件队列（双击 .md 文件），返回是否处理了文件。
   // 后端不再定时发事件，改为前端就绪后拉取，彻底消除事件竞态导致的"打开为空"问题
@@ -1673,6 +1693,71 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       console.error(t("app.error.openFileFailed"), e);
     }
   }, [fileName, isCurrentFileMarkdown, canvasFilePath, previewFilePath, activeVaultIndex, vaults, t]);
+
+  // QuickOpen 的 Ctrl+\ / Ctrl+-：
+  // 把选中文件在激活编辑器的指定方向（Ctrl+\ 右侧 / Ctrl+- 下方）分屏打开，
+  // 做法：在激活 leaf 位置用一个新的 SplitGroup(dir) 替换该 leaf —— 第一个孩子是原 leaf（保留原内容），
+  // 第二个孩子是新 leaf（绑定要打开的新文件）。其他窗格/区域完全不变。
+  // 示例：当前 lr[a, b] 且激活 b → Ctrl+- → lr[a, tb[b, c]]（左a不变，右侧变成 b在上 c在下）
+  const handleOpenInSplit = useCallback(async (path: string, dir: "lr" | "tb") => {
+    // 白板/预览模式不支持分屏打开
+    if (canvasFilePath || previewFilePath) return;
+    const name = path.split(/[/\\]/).pop() || path;
+    if (!isMarkdownFile(name)) return;
+    try {
+      const activeId = activePaneIdRef.current;
+      const currentPanes = panesRef.current;
+      const active = currentPanes.find((p) => p.id === activeId) ?? currentPanes[0];
+
+      // 准备新文件的 buffer：复用已打开的同名文件缓冲（同步视图），否则读取新建
+      const existing = buffersRef.current.find((b) => b.fileName === path);
+      let bufferId: string;
+      if (existing) {
+        bufferId = existing.id;
+      } else {
+        const text = await readTextFile(path);
+        const newBuf: FileBuffer = { id: bid(), fileName: path, content: text, savedContent: text, modified: false };
+        setBuffers((bs) => [...bs, newBuf]);
+        bufferId = newBuf.id;
+      }
+
+      // 新建 pane 绑定新文件 buffer
+      const newPane: Pane = { id: pid(), bufferId, mode: active.mode };
+      setPanes((ps) => [...ps, newPane]);
+
+      // 布局替换：激活 leaf → SplitGroup(dir)[原leaf, 新leaf]，其余完全不动
+      const found = findPaneInTree(splitLayoutRef.current, activeId);
+      const keepLeaf: PaneLeaf = found ? found.leaf : { type: "leaf", paneId: activeId, flex: 1 };
+      const newLeaf: PaneLeaf = { type: "leaf", paneId: newPane.id, flex: 1 };
+      const wrapFlex = found?.leaf.flex ?? 1;
+      const replacement: SplitGroup = { type: "group", groupId: gid(), dir, flex: wrapFlex, children: [keepLeaf, newLeaf] };
+      if (!found) setSplitLayout(replacement);
+      else setSplitLayout(replaceNodeByPath(splitLayoutRef.current, found.path, replacement));
+
+      setActivePaneId(newPane.id);
+
+      // 匿名统计 + 更新最近访问文件列表
+      track(ANALYTICS_EVENTS.FILE_OPEN);
+      trackPageview("/file");
+      const activeVault = activeVaultIndex >= 0 ? vaults[activeVaultIndex] : null;
+      if (activeVault) {
+        setRecentFiles((prev) => {
+          const vaultPath = activeVault.path;
+          const existingRecent = prev[vaultPath] || [];
+          const filtered = existingRecent.filter((p) => p !== path);
+          const updated = [path, ...filtered].slice(0, MAX_RECENT_FILES);
+          return { ...prev, [vaultPath]: updated };
+        });
+      }
+
+      // 延迟聚焦新窗格编辑器，等待挂载
+      setTimeout(() => {
+        paneHandlesRef.current[newPane.id]?.focus();
+      }, 60);
+    } catch (e) {
+      console.error(t("app.error.openFileFailed"), e);
+    }
+  }, [canvasFilePath, previewFilePath, activeVaultIndex, vaults, t]);
 
   // 关闭指定窗格：从布局树移除对应 leaf，并压缩只剩 1 个孩子的空组。
   // 若为激活窗格，焦点切到相邻 leaf；同时清理孤儿缓冲。至少保留一个窗格。
@@ -2102,7 +2187,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     return () => window.removeEventListener("keydown", handler, { capture: true });
   }, []);
 
-  // 分屏快捷键（Ctrl+\ 左右分屏 / Alt+\ 上下分屏，配置见 shortcuts.json 的 app.split-lr / split-tb）
+  // 分屏快捷键（Ctrl+\ 左右分屏 / Ctrl+- 上下分屏，配置见 shortcuts.json 的 app.split-lr / split-tb）
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (matchShortcut(e, shortcutsConfig.app["split-lr"])) {
@@ -2645,6 +2730,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
           onBookmark={handleShowBookmarkDialog}
+          outlineTrigger={outlineTrigger}
         />
 
         {/* 编辑区域 */}
@@ -3262,6 +3348,10 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
           onSelectFileInNewWindow={(path) => {
             setQuickOpenOpen(false);
             handleNewWindow(path);
+          }}
+          onSelectFileInSplitPane={(path, dir) => {
+            setQuickOpenOpen(false);
+            handleOpenInSplit(path, dir);
           }}
           onSelectVault={async (vaultPath) => {
             setQuickOpenOpen(false);
