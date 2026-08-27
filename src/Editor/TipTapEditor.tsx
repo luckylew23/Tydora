@@ -1,5 +1,5 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, useCallback, useState } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { markInputRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Paragraph from "@tiptap/extension-paragraph";
@@ -28,23 +28,9 @@ import HardBreak from "@tiptap/extension-hard-break";
 import { Markdown } from "tiptap-markdown";
 import { defaultMarkdownSerializer } from "prosemirror-markdown";
 import { common, createLowlight } from "lowlight";
-import vimLang from "highlight.js/lib/languages/vim";
-import dockerfileLang from "highlight.js/lib/languages/dockerfile";
-import powershellLang from "highlight.js/lib/languages/powershell";
-import latexLang from "highlight.js/lib/languages/latex";
-import nginxLang from "highlight.js/lib/languages/nginx";
-import cmakeLang from "highlight.js/lib/languages/cmake";
-import scalaLang from "highlight.js/lib/languages/scala";
-import haskellLang from "highlight.js/lib/languages/haskell";
-import elixirLang from "highlight.js/lib/languages/elixir";
-import juliaLang from "highlight.js/lib/languages/julia";
-import tclLang from "highlight.js/lib/languages/tcl";
-import propertiesLang from "highlight.js/lib/languages/properties";
-import gradleLang from "highlight.js/lib/languages/gradle";
 import { Frontmatter } from "./extensions/frontmatter";
 import { Callout } from "./extensions/callout";
 import { Mermaid } from "./extensions/mermaid";
-import { mermaidHljsLang } from "./extensions/mermaid-language";
 import { WikiLink } from "./extensions/wiki-link";
 import { Tag } from "./extensions/tag";
 import { SearchHighlight } from "./extensions/search-highlight";
@@ -75,20 +61,16 @@ import "katex/dist/katex.min.css";
 import "../tags/Tag.css";
 
 const lowlight = createLowlight(common);
-lowlight.register("vim", vimLang);
-lowlight.register("dockerfile", dockerfileLang);
-lowlight.register("powershell", powershellLang);
-lowlight.register("latex", latexLang);
-lowlight.register("nginx", nginxLang);
-lowlight.register("cmake", cmakeLang);
-lowlight.register("scala", scalaLang);
-lowlight.register("haskell", haskellLang);
-lowlight.register("elixir", elixirLang);
-lowlight.register("julia", juliaLang);
-lowlight.register("tcl", tclLang);
-lowlight.register("properties", propertiesLang);
-lowlight.register("gradle", gradleLang);
-lowlight.register("mermaid", mermaidHljsLang);
+// 额外语言（vim/dockerfile/haskell 等 14 种）在首帧渲染后动态 import 注册，
+// 避免启动时同步加载这些语言定义（移入独立 chunk）。
+let extraLanguagesRegistered = false;
+function ensureExtraLanguages() {
+  if (extraLanguagesRegistered) return;
+  extraLanguagesRegistered = true;
+  import("./extra-lowlight-languages").then(({ registerExtraLanguages }) => {
+    registerExtraLanguages(lowlight);
+  }).catch(() => {});
+}
 
 // 图片源码编辑面板：同一时刻只允许一个（所有图片 node view 共享）
 let activeImageSourceEditorClose: (() => void) | null = null;
@@ -198,6 +180,26 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
     currentFilePathRef.current = currentFilePath;
     activeVaultPathRef.current = activeVaultPath;
     imageSettingsRef.current = imageSettings;
+
+    // 首帧渲染后异步注册额外 lowlight 语言（vim/haskell 等 14 种）
+    useEffect(() => { ensureExtraLanguages(); }, []);
+
+    // 安全读取 `editor.storage.markdown.getMarkdown()`：
+    // Tiptap 的 storage 是各扩展在「addStorage()」执行阶段才挂上去的，
+    // 部分扩展的 storage 初始化会异步 defer 到首帧后（Markdown 扩展就是其中之一）。
+    // 窗口秒开后 React/PassiveEffect 运行得比 Tiptap 扩展初始化更早，
+    // 就会出现 `editor.storage.markdown` 还没被写入、读取 undefined.getMarkdown() 的抛错。
+    // 加一个统一 helper：storage 不存在就返回 null（调用方按"无法比较 / 先不同步"处理）。
+    const getMarkdownSafe = (ed: Editor | null | undefined): string | null => {
+      if (!ed) return null;
+      const storage = (ed.storage as Record<string, any> | null | undefined)?.markdown;
+      if (!storage || typeof storage.getMarkdown !== "function") return null;
+      try {
+        return storage.getMarkdown() as string;
+      } catch {
+        return null;
+      }
+    };
 
     const editor = useEditor({
       extensions: [
@@ -897,17 +899,17 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       ],
       content: value || "",
       onUpdate: ({ editor: ed }) => {
-        const md = (ed.storage as Record<string, any>).markdown.getMarkdown();
+        const md = getMarkdownSafe(ed);
 
         if (isInternalRef.current) {
           isInternalRef.current = false;
-        } else if (!mountingRef.current) {
+        } else if (!mountingRef.current && md != null) {
           onChangeRef.current(md);
         }
 
         const text = ed.getText();
         const count = editorSettings?.counterType === "markdown"
-          ? md.length
+          ? (md ?? "").length
           : text.replace(/\s/g, "").length;
         onWordCountRef.current?.(count);
 
@@ -1438,7 +1440,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
     useImperativeHandle(ref, () => ({
       getValue: () => {
         if (!editor) return "";
-        return (editor.storage as Record<string, any>).markdown.getMarkdown();
+        return getMarkdownSafe(editor) ?? "";
       },
       setValue: (val: string) => {
         if (!editor) return;
@@ -1670,8 +1672,10 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
           }
         });
       } else {
-        const currentContent = (editor.storage as Record<string, any>).markdown.getMarkdown();
-        if (value !== currentContent) {
+        const currentContent = getMarkdownSafe(editor);
+        // storage.markdown 未就绪时：不比较，保守地不同步（避免覆盖文档内容/引发 setContent 震荡）。
+        // 下一帧 onUpdate 回调里会带着 md 再执行 onChange，不会因此丢失 value。
+        if (currentContent != null && value !== currentContent) {
           isInternalRef.current = true;
           editor.commands.setContent(value);
         }

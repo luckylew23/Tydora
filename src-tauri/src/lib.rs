@@ -2,13 +2,39 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{Emitter, Manager, WebviewWindowBuilder, State};
+
+/// 进程级启动起点，在 `run()` 入口处初始化。
+/// 所有 Rust 侧埋点都基于此计算 `ms_since_process_start`，
+/// 并通过 `boot-timing` 事件发送给前端，让两条时间轴对齐。
+static BOOT_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// 向前端 `boot-timing` 事件发送一条时间戳记录，同时打印到 stderr（Rust 控制台可见）。
+/// `ms_since_process_start`：相对进程启动的毫秒数（与 JS 侧收到事件的 performance.now()
+///  可以直接比较，差值就是 Rust 阶段完成 → JS 侧事件送达之间的 WebView IPC 延迟）。
+fn emit_boot_timing<R: tauri::Runtime, M: tauri::Manager<R> + tauri::Emitter<R>>(app: &M, stage: &str) {
+    let t0 = match BOOT_START.get() {
+        Some(t) => t,
+        None => return,
+    };
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let payload = serde_json::json!({
+        "stage": stage,
+        "ms_since_process_start": ms,
+    });
+    eprintln!("[BOOT-RUST] {stage}: {ms:.2} ms");
+    let _ = app.emit("boot-timing", &payload);
+}
 
 mod commands;
 use commands::watcher_commands::{watch_vault, unwatch_vault, WatcherState};
 use commands::remote_image::{fetch_remote_image, HttpClientState};
 use commands::proxy::{start_proxy_server, fetch_page_title};
 use commands::file_commands::list_dir_with_meta;
+use commands::terminal_commands::{
+    spawn_terminal, write_terminal, resize_terminal, kill_terminal, TerminalManager,
+};
 
 struct PreviewServer(Mutex<Option<std::process::Child>>);
 
@@ -117,10 +143,27 @@ fn take_pending_files(state: State<'_, PendingFiles>) -> Vec<String> {
     std::mem::take(&mut *state.0.lock().unwrap())
 }
 
+/// 快速检查是否有待打开的文件（不取数据，仅判断是否为空）。
+/// 比 take_pending_files 更轻量（不移动 Vec 内存），前端用于首渲染前
+/// 判断"要不要显示欢迎页"：若队列有文件 → 显示纯白等待（不闪现欢迎卡片）。
+#[tauri::command]
+fn has_pending_files(state: State<'_, PendingFiles>) -> bool {
+    !state.0.lock().unwrap().is_empty()
+}
+
 /// 获取应用版本号（从 tauri.conf.json 读取，单一版本源）
 #[tauri::command]
 fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+/// 所有子窗口统一的背景色：纯白不透明。
+/// 原因：Windows WebView2 在首帧（HTML/CSS 真正 paint 之前）会先用"窗口背景色"
+/// 填充整个客户区。如果不设置，默认是黑色，就会出现用户截图里的"右下黑边"
+/// （窗口先出现 → WebView 还没 paint → 用户看到一片黑色填充区域）。
+fn white_window_bg() -> tauri::utils::config::Color {
+    // Color 是元组结构体 Color(pub u8, pub u8, pub u8, pub u8) = (R, G, B, A)
+    tauri::utils::config::Color(255, 255, 255, 255)
 }
 
 /// 打开设置窗口
@@ -145,6 +188,7 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     .visible(false)
     .decorations(false)
     .resizable(true)
+    .background_color(white_window_bg())
     .build();
 
     match settings_window {
@@ -193,7 +237,8 @@ fn spawn_editor_window(
     .inner_size(width.unwrap_or(1200.0), height.unwrap_or(800.0))
     .min_inner_size(600.0, 400.0)
     .decorations(false)
-    .resizable(true);
+    .resizable(true)
+    .background_color(white_window_bg());
 
     // 有上次保存的位置则直接在该位置打开（避免先居中再移动的跳动），否则居中
     // 前端保存的为逻辑坐标（outerPosition / scaleFactor），position 直接接受逻辑坐标
@@ -262,6 +307,7 @@ async fn open_mindmap_window(
     .visible(false)
     .decorations(false)
     .resizable(true)
+    .background_color(white_window_bg())
     .build();
 
     match window {
@@ -295,6 +341,7 @@ async fn open_graph_window(
     .visible(false)
     .decorations(false)
     .resizable(true)
+    .background_color(white_window_bg())
     .build();
 
     match window {
@@ -334,6 +381,7 @@ async fn open_canvas_window(
     .visible(false)
     .decorations(false)
     .resizable(true)
+    .background_color(white_window_bg())
     .build();
 
     match window {
@@ -380,6 +428,7 @@ async fn open_canvas_in_new_window(
     .center()
     .decorations(false)
     .resizable(true)
+    .background_color(white_window_bg())
     .build();
 
     match window {
@@ -424,6 +473,7 @@ async fn open_vault_manager_window(app: tauri::AppHandle) -> Result<(), String> 
     .visible(false)
     .decorations(false)
     .resizable(true)
+    .background_color(white_window_bg())
     .build();
 
     match window {
@@ -488,6 +538,7 @@ async fn open_vault_in_new_window(app: tauri::AppHandle, vault_path: String, wid
     .center()
     .decorations(false)
     .resizable(true)
+    .background_color(white_window_bg())
     .build();
 
     match window {
@@ -1593,6 +1644,10 @@ async fn install_portable_update(
 }
 
 pub fn run() {
+    // 第一行代码：标记"进程进入 Rust run()"起点。
+    // （更早的 exe entry / tauri_runtime 初始化无法在此处捕获，但通常 < 20ms）
+    let _ = BOOT_START.set(Instant::now());
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1676,10 +1731,23 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
+    {
+        // builder 构造阶段埋点：此时所有 plugin + single_instance + scheme 都已经配置完毕
+        // （但还没有进入 invoke_handler / setup / run 执行阶段）。
+        // 通过一个小型 .setup() 包装记录"builder 配置完成"，避免改动原 builder 链结构。
+        let _ = BOOT_START.get().map(|t| {
+            eprintln!(
+                "[BOOT-RUST] builder_configured: {:.2} ms",
+                t.elapsed().as_secs_f64() * 1000.0
+            );
+        });
+    }
+
     builder
         .invoke_handler(tauri::generate_handler![
             get_default_content,
             take_pending_files,
+            has_pending_files,
             get_app_version,
             is_store_version,
             is_portable_version,
@@ -1716,15 +1784,23 @@ pub fn run() {
             create_export_file,
             append_export_file,
             notify_main_closing,
-            list_dir_with_meta
+            list_dir_with_meta,
+            spawn_terminal,
+            write_terminal,
+            resize_terminal,
+            kill_terminal
         ])
         .setup(|app| {
+            emit_boot_timing(app, "setup_begin");
+
             // 初始化文件监听器状态
             app.manage(WatcherState(std::sync::Mutex::new(None)));
             app.manage(PreviewServer(std::sync::Mutex::new(None)));
             app.manage(HttpClientState::new());
             app.manage(PendingFiles(std::sync::Mutex::new(Vec::new())));
             app.manage(MainWindowClosing::default());
+            app.manage(TerminalManager::default());
+            emit_boot_timing(app, "setup_state_managed");
 
             // 处理命令行参数（从文件管理器"打开方式"启动时传入的文件路径）：
             // 放入待打开队列，由前端加载完成后通过 take_pending_files 主动拉取
@@ -1737,12 +1813,31 @@ pub fn run() {
                     .unwrap()
                     .extend(file_paths);
             }
+            emit_boot_timing(app, "setup_args_processed");
+
+            // tauri.conf.json 中声明的窗口（含 label="main"）会在 setup 之前由 Tauri
+            // runtime 自动创建完成。这里记录"main window handle ready"的时间，
+            // 若 handle 不存在则说明 tauri.conf.json 中 windows 配置变更或未生效。
+            if app.get_webview_window("main").is_some() {
+                emit_boot_timing(app, "main_window_handle_ready");
+                // tauri-plugin-window-state 已在 setup 前自动恢复 SIZE/POSITION/MAXIMIZED
+                // （StateFlags 里排除了 VISIBLE），所以此时窗口已经是正确尺寸/位置，
+                // 只差最后一步 show() → 用户看到的第一帧就是正确大小，完全没有跳动。
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                }
+                emit_boot_timing(app, "main_window_shown");
+            } else {
+                eprintln!("[BOOT-RUST] main_window_handle_ready: (NOT FOUND — check tauri.conf.json windows)");
+            }
 
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
+
+            emit_boot_timing(app, "setup_ready");
             Ok(())
         })
         .run(tauri::generate_context!())

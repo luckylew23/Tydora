@@ -1,12 +1,20 @@
-import { useState, useCallback, useRef, useEffect, useMemo, Component, Fragment, lazy, Suspense } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, Component, Fragment, lazy, Suspense } from "react";
+import { bootStart, bootEnd, bootStamp, bootSummary } from "./boot-timing";
+bootStamp("App_module_imported");
 import { useTranslation } from "react-i18next";
-import { getCurrentWindow, availableMonitors } from "@tauri-apps/api/window";
-import { PhysicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
-import { clampWindowToMonitor } from "./services/windowState";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readTextFile, writeTextFile, rename, exists } from "@tauri-apps/plugin-fs";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { TipTapEditor as Editor, CodeMirrorEditor, type EditorHandle, type CodeMirrorEditorHandle, type EditorMode, MODE_LABELS } from "./Editor";
+import type { EditorHandle, EditorMode } from "./Editor/types";
+import type { CodeMirrorEditorHandle } from "./Editor/CodeMirrorEditor";
+import { MODE_LABELS } from "./Editor/types";
+// lazy load：TipTap/CodeMirror/Terminal 是重型组件，首次渲染不一定需要
+const Editor = lazy(() => import("./Editor/TipTapEditor").then(m => ({ default: m.default })));
+const CodeMirrorEditor = lazy(() => import("./Editor/CodeMirrorEditor").then(m => ({ default: m.default })));
+const TerminalView = lazy(() => import("./Terminal/TerminalView").then(m => ({ default: m.TerminalView })));
+import { killTerminal, unregisterTerminal } from "./Terminal/terminalApi";
+import { startTerminalSettingsSync } from "./Terminal/terminal-settings";
 import Sidebar, { VaultInfo } from "./Sidebar";
 import { FilePreview } from "./components";
 import { QuickOpen } from "./components";
@@ -29,6 +37,7 @@ import { useVaultWatcher } from "./services";
 import PublishPanel from "./publish/PublishPanel";
 import PublishConfigDialog from "./publish/PublishConfigDialog";
 import { CONFIG_FILE } from "./publish/PublishService";
+import { buildIndexesTogether, persistIndexesToStorage, restoreIndexesFromCache } from "./services/index-builder";
 
 // 关系图谱 / 白板仅在打开时渲染，按需加载（避免 d3、@xyflow 进入首屏 bundle）
 const GraphView = lazy(() => import("./graph").then((m) => ({ default: m.GraphView })));
@@ -147,7 +156,9 @@ interface FileBuffer {
 }
 interface Pane {
   id: string;
-  bufferId: string;
+  kind: "editor" | "terminal";
+  bufferId?: string;
+  terminalId?: string;
   mode: EditorMode;
 }
 interface PaneLeaf {
@@ -275,6 +286,34 @@ function removePaneAndCollapse(root: SplitNode, paneId: string): { root: SplitNo
 }
 
 function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string | null; initialVaultPath?: string | null }) {
+  bootStart("App_body_to_first_effect");
+  bootStamp("App_component_render_enter");
+
+  // 启动早期的快速判断："是否有外部待打开文件（双击 .md 冷启动）"。
+  // Rust 的 has_pending_files 仅判断队列是否为空（<5ms），远快于完整的 take_pending_files。
+  // 用它来决定首渲染时要不要显示欢迎卡片：
+  //   null  = 快查还没回来 → 先显示纯白（不闪现欢迎卡片，避免双击文件时"先欢迎再跳到编辑器"）
+  //   true  = 有文件 → 继续保持纯白，直到文件打开完毕
+  //   false = 没有文件 → 显示欢迎卡片
+  // initialFilePath 是 URL 传入（editor 新窗口），同步已知有文件，直接跳过欢迎。
+  const pendingFilesCheckRef = useRef<Promise<boolean> | null>(null);
+  if (!initialFilePath && !pendingFilesCheckRef.current && typeof (window as any).__TAURI_INTERNALS__ !== "undefined") {
+    pendingFilesCheckRef.current = invoke<boolean>("has_pending_files").catch(() => false);
+  }
+  const [hasPendingFileResult, setHasPendingFileResult] = useState<boolean | null>(
+    initialFilePath ? true : null
+  );
+  // 第一个 effect：等快查结果返回。useLayoutEffect 早于 paint，但 Promise 本身还是异步。
+  // 即便如此，由于首渲染时 state=null 也不显示欢迎，用户不会看到欢迎卡片。
+  useLayoutEffect(() => {
+    if (initialFilePath) return;
+    if (!pendingFilesCheckRef.current) {
+      setHasPendingFileResult(false);
+      return;
+    }
+    pendingFilesCheckRef.current.then((v) => setHasPendingFileResult(v));
+  }, [initialFilePath]);
+
   const { theme } = useTheme();
   const { t } = useTranslation();
   const [saveStatus, setSaveStatus] = useState<"idle" | "modified" | "saved">("idle");
@@ -282,7 +321,10 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // ── N 窗格共享缓冲 + 树形嵌套布局 ──
   const initialPaneId = pid();
   const [buffers, setBuffers] = useState<FileBuffer[]>(() => [{ id: bid(), fileName: null, content: "", savedContent: "", modified: false }]);
-  const [panes, setPanes] = useState<Pane[]>(() => [{ id: initialPaneId, bufferId: buffers[0].id, mode: editorSettings.defaultMode }]);
+  const [panes, setPanes] = useState<Pane[]>(() => [{ id: initialPaneId, kind: "editor", bufferId: buffers[0].id, mode: editorSettings.defaultMode }]);
+  // 终端会话登记表：terminalId -> { cwd }。PTY 实际由 Rust 端 TerminalManager 持有，
+  // 这里仅记录前端需要的信息（工作目录），并在关闭面板且无其他引用时清理条目。
+  const [terminals, setTerminals] = useState<Record<string, { id: string; cwd: string }>>({});
   const [activePaneId, setActivePaneId] = useState<string>(() => initialPaneId);
   // 布局树根节点：单窗格时就是一个 PaneLeaf，分屏时会嵌套 SplitGroup
   const [splitLayout, setSplitLayout] = useState<SplitNode>(() => ({ type: "leaf", paneId: initialPaneId, flex: 1 }));
@@ -292,7 +334,12 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 派生：当前激活窗格与其缓冲。content/fileName/modified 保持原名（派生常量），
   // 供所有既有读取点（字数、大纲、链接索引、标题、查找替换、导出等）继续使用。
   // 加兜底空对象，避免极端情况下 panes/buffers 临时为空导致读取 .content/.id 等 undefined 崩溃
-  const activePane = panes.find((p) => p.id === activePaneId) ?? panes[0] ?? ({ id: initialPaneId, bufferId: "", mode: editorSettings.defaultMode } as Pane);
+  const activePane = panes.find((p) => p.id === activePaneId) ?? panes[0] ?? ({ id: initialPaneId, kind: "editor", bufferId: "", mode: editorSettings.defaultMode } as Pane);
+  // 当前激活窗格是否为终端（用于隐藏/禁用编辑器专属 UI、放宽分屏守卫等）
+  const isActiveTerminal = activePane.kind === "terminal";
+  // 布局中是否存在终端窗格：存在时强制走分屏树渲染分支，
+  // 避免“仅有终端、无 md 缓冲”时落入欢迎页或 CodeMirrorEditor 兜底。
+  const layoutHasTerminal = panes.some((p) => p.kind === "terminal");
   const activeBuffer = buffers.find((b) => b.id === activePane.bufferId) ?? buffers[0] ?? ({ id: "", fileName: null, content: "", savedContent: "", modified: false } as FileBuffer);
   const content = activeBuffer.content;
   const fileName = activeBuffer.fileName;
@@ -309,6 +356,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   buffersRef.current = buffers;
   const panesRef = useRef(panes);
   panesRef.current = panes;
+  const terminalsRef = useRef(terminals);
+  terminalsRef.current = terminals;
   const splitLayoutRef = useRef(splitLayout);
   splitLayoutRef.current = splitLayout;
   // 每个分屏组对应的外层 DOM（用于该组内部拖拽计算尺寸）；key = groupId
@@ -327,57 +376,24 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const setModified = useCallback((v: boolean) => updateBuffer(activeBufferIdRef.current, { modified: v }), [updateBuffer]);
   // 切换激活窗格的编辑模式（per-pane mode 存于 pane.mode）
   const setViewMode = useCallback((m: EditorMode) => setPanes((ps) => ps.map((p) => (p.id === activePaneIdRef.current ? { ...p, mode: m } : p))), []);
-  const [typewriterMode, setTypewriterMode] = useState(() => {
+  // 合并读取：此前 7 个 useState 各自独立 localStorage.getItem + JSON.parse 同一个 key，
+  // 现在只读一次、解析一次，复用于全部 useState 初始化。
+  const generalSettingsRead = useRef(false);
+  const generalSettingsRef = useRef<Record<string, any>>({});
+  if (!generalSettingsRead.current) {
+    generalSettingsRead.current = true;
     try {
       const raw = localStorage.getItem("zmd-general-settings");
-      if (raw) {
-        const s = JSON.parse(raw);
-        return s.typewriterMode ?? false;
-      }
-    } catch {}
-    return false;
-  });
-  const [previewMaxWidth, setPreviewMaxWidth] = useState(() => {
-    try {
-      const raw = localStorage.getItem("zmd-general-settings");
-      if (raw) {
-        const s = JSON.parse(raw);
-        return s.previewMaxWidth ?? 800;
-      }
-    } catch {}
-    return 800;
-  });
-  const [lineHeight, setLineHeight] = useState(() => {
-    try {
-      const raw = localStorage.getItem("zmd-general-settings");
-      if (raw) {
-        const s = JSON.parse(raw);
-        return s.lineHeight ?? 1.6;
-      }
-    } catch {}
-    return 1.6;
-  });
-  const [irLineNumbers, setIrLineNumbers] = useState(() => {
-    try {
-      const raw = localStorage.getItem("zmd-general-settings");
-      if (raw) {
-        const s = JSON.parse(raw);
-        return s.irLineNumbers ?? true;
-      }
-    } catch {}
-    return true;
-  });
+      generalSettingsRef.current = raw ? JSON.parse(raw) : {};
+    } catch { /* ignore */ }
+  }
+  const s = generalSettingsRef.current;
+  const [typewriterMode, setTypewriterMode] = useState(() => s.typewriterMode ?? false);
+  const [previewMaxWidth, setPreviewMaxWidth] = useState(() => s.previewMaxWidth ?? 800);
+  const [lineHeight, setLineHeight] = useState(() => s.lineHeight ?? 1.6);
+  const [irLineNumbers, setIrLineNumbers] = useState(() => s.irLineNumbers ?? true);
   // 双击 .md 文件外部打开时，是否展开侧栏并自动切换到大纲视图（默认开启）
-  const [expandOutlineOnOpen, setExpandOutlineOnOpen] = useState(() => {
-    try {
-      const raw = localStorage.getItem("zmd-general-settings");
-      if (raw) {
-        const s = JSON.parse(raw);
-        return s.expandOutlineOnOpen ?? true;
-      }
-    } catch {}
-    return true;
-  });
+  const [expandOutlineOnOpen, setExpandOutlineOnOpen] = useState(() => s.expandOutlineOnOpen ?? true);
   // 传递给 Sidebar 的"切到大纲"触发器（每次自增促使 Sidebar 切 tab）
   const [outlineTrigger, setOutlineTrigger] = useState(0);
   // Ctrl+滚轮调整字号时的右上角提示（停止滚动 1.5s 后自动消失）
@@ -390,6 +406,12 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 匿名统计：首次启动弹窗征得同意后才会上报（未选择前不发送任何数据）
   const [consentVisible, setConsentVisible] = useState<boolean>(() => !hasConsentChoice());
 
+  // 启动埋点：App 组件进入第一个 useEffect = React 完成首次 commit 后
+  useEffect(() => {
+    bootStamp("App_first_useEffect_fired");
+    bootEnd("App_body_to_first_effect");
+  }, []);
+
   // 用户已同意时，上报应用启动事件（仅统计使用情况，不含文件路径/内容等任何数据）
   useEffect(() => {
     if (!consentVisible && isAnalyticsEnabled()) {
@@ -399,6 +421,11 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       trackPageview("/app/launch");
     }
   }, [consentVisible]);
+
+  // 启动终端设置跨窗口同步：设置窗口修改配色/字体/字号后，主窗口已挂载终端实时热更新。
+  useEffect(() => {
+    startTerminalSettingsSync();
+  }, []);
 
   const handleConsentDecision = useCallback((granted: boolean) => {
     setAnalyticsEnabled(granted);
@@ -478,6 +505,14 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
+  // 统一的字号提示气泡（编辑器 Ctrl+滚轮 与 终端 Ctrl+滚轮 共用）：
+  // 更新右上角显示并在停止滚动 1.5s 后自动消失。
+  const showFontSizeToast = (size: number) => {
+    setFontSizeToast(size);
+    if (fontSizeToastTimerRef.current) clearTimeout(fontSizeToastTimerRef.current);
+    fontSizeToastTimerRef.current = setTimeout(() => setFontSizeToast(null), 1500);
+  };
+
   // Ctrl + 滚轮：在编辑区调整字号（范围与设置面板一致 10-24px，持久化到 zmd-general-settings）
   useEffect(() => {
     const container = document.querySelector<HTMLElement>(".editor-container");
@@ -487,6 +522,9 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.altKey || e.shiftKey) return;
+      // 滚轮落在终端面板内时，交给终端自己的缩放处理，避免“聚焦终端却连编辑器一起缩放”。
+      const targetEl = e.target as HTMLElement | null;
+      if (targetEl && targetEl.closest(".terminal-pane")) return;
       e.preventDefault();
       const dir = e.deltaY < 0 ? 1 : -1; // 向上滚动放大，向下滚动缩小
       try {
@@ -500,9 +538,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         localStorage.setItem("zmd-general-settings", JSON.stringify(settings));
         document.documentElement.style.setProperty("--editor-font-size", next + "px");
         // 右上角显示当前字号，停止滚动 1.5s 后自动消失
-        setFontSizeToast(next);
-        if (fontSizeToastTimerRef.current) clearTimeout(fontSizeToastTimerRef.current);
-        fontSizeToastTimerRef.current = setTimeout(() => setFontSizeToast(null), 1500);
+        showFontSizeToast(next);
       } catch {}
     };
     container.addEventListener("wheel", onWheel, { passive: false });
@@ -578,26 +614,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 可以最终决定主窗口可见性（避免竞态提前关闭）
   const [externalLaunchSettled, setExternalLaunchSettled] = useState(false);
   const [hasExternalFile, setHasExternalFile] = useState(false);
-  const [autoHideTopbar, setAutoHideTopbar] = useState(() => {
-    try {
-      const raw = localStorage.getItem("zmd-general-settings");
-      if (raw) {
-        const s = JSON.parse(raw);
-        return s.autoHideTopbar ?? true;
-      }
-    } catch {}
-    return true;
-  });
-  const [autoHideTopbarOnCollapse, setAutoHideTopbarOnCollapse] = useState(() => {
-    try {
-      const raw = localStorage.getItem("zmd-general-settings");
-      if (raw) {
-        const s = JSON.parse(raw);
-        return s.autoHideTopbarOnCollapse ?? true;
-      }
-    } catch {}
-    return true;
-  });
+  const [autoHideTopbar, setAutoHideTopbar] = useState(() => s.autoHideTopbar ?? true);
+  const [autoHideTopbarOnCollapse, setAutoHideTopbarOnCollapse] = useState(() => s.autoHideTopbarOnCollapse ?? true);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
@@ -795,51 +813,122 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     }
   }, [initialVaultPath, vaults]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 启动时窗口可见性策略：
-  // - 无仓库且无外部文件（未通过双击 .md 打开文件）：只显示管理仓库窗口，
-  //   并关闭当前主窗口，用户必须新建或打开仓库后才能进入编辑窗口
-  // - 有仓库或有外部文件：显示当前窗口正常使用
+  // 启动时窗口可见性策略（秒开版）：
+  // - 目标：用户点击 exe → 尽可能早看到主窗口（Rust 端 visible=true 已保证创建即显示）
+  // - 正常路径（有仓库 / 双击 .md 打开文件）：始终显示主窗口，不做跨窗口跳转
+  // - 无仓库且无外部文件：先立即显示主窗口（不阻塞），等 pending files 两次拉取结束后
+  //   再异步打开"管理仓库"窗口并隐藏/关闭主窗口，保证"用户始终能看到界面"
+  //
+  // 关键点：这里**不再依赖 externalLaunchSettled 作为前置条件**（否则被迫等 1.2s 的兜底二次拉取），
+  // 而是"先显示再说"——外部文件即便稍后到达也有事件监听 + useLayoutEffect 响应。
   useEffect(() => {
-    // 等待外部文件二次拉取兜底完成后才决定，避免竞态（首次拉取可能遗漏启动初期的事件）
-    if (!externalLaunchSettled) return;
-    if (vaults.length === 0 && !initialFilePath && !hasExternalFile) {
-      // 先确保管理仓库窗口成功打开，再关闭主窗口，避免应用无窗口退出。
-      // 关闭前通知 Rust 标记主窗口即将销毁，防止单实例回调向正在销毁的
-      // 窗口发消息触发 "PostMessage failed（0x80070578 无效的窗口句柄）"
-      (async () => {
-        try {
-          document.title = "DBG:S1-open";
-          await invoke("open_vault_manager_window");
-          document.title = "DBG:S2-notify";
-          await invoke("notify_main_closing");
-          document.title = "DBG:S3-close";
-          await getCurrentWindow().close();
-          document.title = "DBG:S4-closed";
-        } catch (e) {
-          document.title = "DBG:CATCH-" + String(e);
-          console.error("打开管理仓库窗口失败", e);
-          getCurrentWindow().show();
+    const win = getCurrentWindow();
+    // 1) Rust 端 setup 已经调用了 window.show()（正确尺寸/位置后才显示）。
+    //    这里先查 isVisible()，如果窗口已经可见就跳过 show()（避免 ~96ms 的冗余 IPC）。
+    //    仅在被插件、最小化恢复等意外隐藏时才兜底调用 show()。
+    bootStart("visibility_show_window");
+    bootStamp("visibility_show_window_called");
+    (async () => {
+      try {
+        const visible = await win.isVisible();
+        bootStamp(`visibility_is_visible_check_${visible}`);
+        if (!visible) {
+          await win.show();
         }
-      })();
-    } else {
-      document.title = "DBG:ELSE-SHOW";
-      getCurrentWindow().show();
-    }
-  }, [externalLaunchSettled, hasExternalFile]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 构建链接索引和标签索引
-  useEffect(() => {
-    if (activeVaultIndex >= 0) {
-      const vaultPath = vaults[activeVaultIndex]?.path;
-      if (vaultPath) {
-        LinkIndexService.buildIndex(vaultPath).then(() => {
-          try {
-            localStorage.setItem("zmd-link-index", LinkIndexService.serialize());
-          } catch { /* 忽略存储错误 */ }
-        });
-        TagIndexService.buildIndex(vaultPath);
+        bootStamp("visibility_window_shown");
+        bootEnd("visibility_show_window");
+        setTimeout(() => bootSummary(), 0);
+      } catch (e) {
+        console.warn("visibility 检查/显示失败（忽略）", e);
       }
+    })();
+
+    // 2) 若仓库列表非空 → 直接进入正常路径，完全不等待 pending-files 二次拉取
+    if (vaults.length > 0 || !!initialFilePath) {
+      return;
     }
+
+    // 3) 无仓库分支：等 externalLaunchSettled 再做决策（防止"没仓库且也没外部文件"时，
+    //    管理仓库窗口过早抢焦点、或主窗口短暂出现后立刻消失引起闪烁）。
+    //    关键不同：主窗口仍已由上面 show() 显示，用户不会看到黑屏。
+    let cancelled = false;
+    (async () => {
+      // 通过事件订阅 or 轮询 settled：这里直接依赖 React state 的第二次渲染触发。
+      // 第一次渲染时 externalLaunchSettled=false，会走到下面的 early return；
+      // 当 setState(true) 后 effect 重新运行，此时才进入 settled 分支。
+    })();
+
+    if (!externalLaunchSettled) return;
+    if (hasExternalFile) return;
+
+    // 4) settled=true 且确实没有任何外部文件 → 打开管理仓库窗口 + 关闭主窗口
+    (async () => {
+      try {
+        bootStart("visibility_no_vault_path");
+        bootStamp("visibility_no_vault_before_open_vault_manager");
+        await invoke("open_vault_manager_window");
+        bootStamp("visibility_no_vault_after_open_vault_manager");
+        if (cancelled) return;
+        await invoke("notify_main_closing");
+        bootStamp("visibility_no_vault_after_notify_closing");
+        await win.close();
+        bootStamp("visibility_no_vault_after_close");
+        bootEnd("visibility_no_vault_path");
+      } catch (e) {
+        bootStamp("visibility_no_vault_catch_show_fallback");
+        bootEnd("visibility_no_vault_path");
+        console.error("打开管理仓库窗口失败（主窗口保持可见）", e);
+        win.show().catch(() => {});
+        bootStamp("visibility_window_shown_via_fallback");
+        setTimeout(() => bootSummary(), 0);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [externalLaunchSettled, hasExternalFile, vaults, initialFilePath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 构建链接索引和标签索引（优化版：先缓存恢复 UI → 后台联合构建 → 统一持久化）
+  useEffect(() => {
+    if (activeVaultIndex < 0) return;
+    const vaultPath = vaults[activeVaultIndex]?.path;
+    if (!vaultPath) return;
+
+    // 策略 A 第一步：同步加载 localStorage 缓存（毫秒级），让侧栏/反链/标签立即可用
+    // 不关心是否成功：失败时 buildIndexesTogether 内部会降级全量构建
+    bootStart("index_restore_and_build");
+    bootStamp("index_restore_from_cache_start");
+    const fromCache = restoreIndexesFromCache();
+    bootStamp("index_restore_from_cache_done");
+
+    // 放到下一个 tick 再跑重量级 I/O，让首帧 UI 先渲染完成
+    // （避免 useEffect 同步阻塞 React commit 阶段的绘制调度）
+    const handle = window.setTimeout(async () => {
+      try {
+        bootStamp("index_build_start");
+        // fromCache 已由上方 restoreIndexesFromCache 确定，传入避免重复读取
+        await buildIndexesTogether(vaultPath, { useCache: false, incremental: true, fromCache });
+        bootStamp("index_build_done");
+      } catch (e) {
+        bootStamp("index_build_failed_fallback_start");
+        // 新流程失败时安全降级到老的独立 buildIndex 组合，保证功能可用
+        console.error("[App] 联合索引构建失败，降级为独立构建", e);
+        try {
+          await LinkIndexService.buildIndex(vaultPath);
+        } catch { /* ignore */ }
+        try {
+          await TagIndexService.buildIndex(vaultPath);
+        } catch { /* ignore */ }
+        bootStamp("index_build_failed_fallback_done");
+      } finally {
+        // 无论新老流程成功与否，最后统一持久化（让下次启动有缓存可用）
+        try { persistIndexesToStorage(); } catch { /* ignore */ }
+        bootStamp("index_persist_done");
+        bootEnd("index_restore_and_build");
+        setTimeout(() => bootSummary(), 0);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(handle);
   }, [activeVaultIndex, vaults]);
 
   // 文件监听：外部文件变化时自动更新索引
@@ -855,11 +944,14 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     localStorage.setItem(XHS_PREVIEW_WIDTH_KEY, String(xhsPreviewWidth));
   }, [xhsPreviewWidth]);
 
-  // 启动时自动检查更新
+  // 启动后延迟检查更新（不阻塞首屏渲染）
   useEffect(() => {
-    checkForUpdate().then((info) => {
-      if (info) setUpdateInfo(info);
-    }).catch(() => {});
+    const timer = setTimeout(() => {
+      checkForUpdate().then((info) => {
+        if (info) setUpdateInfo(info);
+      }).catch(() => {});
+    }, 2000);
+    return () => clearTimeout(timer);
   }, []);
 
   // 新窗口：打开指定文件（通过 URL 参数）。内容直接写入激活缓冲，
@@ -944,39 +1036,10 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     saveWindowStateRef.current = saveWindowState;
 
-    // 恢复保存的窗口状态
-    (async () => {
-      try {
-        const saved = localStorage.getItem(stateKey);
-        if (!saved) return;
-        const state = JSON.parse(saved) as {
-          x: number; y: number; width: number; height: number; maximized: boolean;
-        };
-
-        // 钳制窗口尺寸和位置到显示器边界
-        const monitors = await availableMonitors();
-        if (monitors && monitors.length > 0 && state.width && state.height) {
-          const clamped = clampWindowToMonitor(
-            { x: state.x ?? 0, y: state.y ?? 0, width: state.width, height: state.height },
-            monitors
-          );
-          // 编辑窗口：位置/尺寸在 Rust 创建窗口时已按保存状态直接设置（或按编辑区尺寸居中），
-          // 前端不再二次移动，避免"先打开窗口再移动"的跳动；仅主窗口需要恢复
-          if (!isEditorWindow) {
-            await win.setSize(new PhysicalSize(clamped.width, clamped.height));
-            await win.setPosition(new PhysicalPosition(clamped.x, clamped.y));
-          }
-        }
-        // 编辑窗口不恢复最大化，保证新窗口宽度始终等于编辑区宽度
-        if (state.maximized && !isEditorWindow) {
-          await win.maximize();
-        }
-      } catch {
-        // 恢复失败则使用默认值
-      }
-    })();
-
     // 监听移动/缩放事件（防抖保存）
+    // 注：窗口启动时的尺寸/位置恢复由 Rust 端 tauri-plugin-window-state 负责
+    // （tauri.conf.json visible=false，setup 前插件恢复 SIZE/POSITION/MAXIMIZED，
+    //  setup 里 show()），比 JS 端启动后再恢复快 ~600ms，且完全没有跳动。
     let moveTimer: ReturnType<typeof setTimeout>;
     let resizeTimer: ReturnType<typeof setTimeout>;
 
@@ -1036,7 +1099,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 保存状态闪烁、搜索高亮清理、思维导图同步与自动补全光标检查等副作用。
   const handlePaneChange = useCallback((paneId: string, value: string) => {
     const pane = panesRef.current.find((p) => p.id === paneId);
-    if (!pane) return;
+    if (!pane || !pane.bufferId) return;
     const buf = buffersRef.current.find((b) => b.id === pane.bufferId);
     const isModified = value !== (buf?.savedContent ?? value);
     updateBuffer(pane.bufferId, { content: value, modified: isModified });
@@ -1327,17 +1390,39 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
 
   // 通过文件关联启动（双击 .md 文件）：冷启动时主动拉取队列，
   // 并延迟二次拉取兜底（应用启动初期的外部打开请求可能落在首次拉取之后、事件监听注册之前）
+  // 注意：这个延迟已**不再阻塞窗口显示**（窗口可见性在单独的 effect 中立即执行），
+  // 因此这里的 250ms 仅影响"无仓库且无外部文件时"管理仓库窗口出现的时机。
   useEffect(() => {
     if (initialFilePath) {
       // 新窗口模式（window=editor）：文件路径来自 URL 参数，不走外部队列
+      bootStamp("external_launch_initial_filepath_skip_queue");
       setExternalLaunchSettled(true);
       return;
     }
     (async () => {
-      await processPendingFiles();
+      bootStart("external_launch_pending_queue_fetch");
+      bootStamp("external_launch_first_fetch_start");
+      const openedFirst = await processPendingFiles();
+      bootStamp("external_launch_first_fetch_done");
+      if (openedFirst) {
+        // 首次已经拿到文件：不再等待第二次兜底拉取，立即 settled
+        setExternalLaunchSettled(true);
+        bootStamp("external_launch_settled_true");
+        bootEnd("external_launch_pending_queue_fetch");
+        return;
+      }
+      // 250ms 兜底（之前是 1200ms）：
+      //   - 用户没双击 .md：250ms 后 settled，"无仓库时"才能跳管理窗口
+      //   - 用户双击了但 first fetch 竞态漏掉：250ms 内再次拉取到队列
       setTimeout(() => {
-        processPendingFiles().then(() => setExternalLaunchSettled(true));
-      }, 1200);
+        bootStamp("external_launch_second_fetch_start");
+        processPendingFiles().then(() => {
+          bootStamp("external_launch_second_fetch_done");
+          setExternalLaunchSettled(true);
+          bootStamp("external_launch_settled_true");
+          bootEnd("external_launch_pending_queue_fetch");
+        });
+      }, 250);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1384,26 +1469,40 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       trackPageview("/file");
 
       const activePaneObj = panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0];
-      // 检查激活窗格的 buffer 是否被多个窗格共享（分屏同步状态）
-      const activeBufferId = activePaneObj.bufferId;
-      const activeBufferHolders = panesRef.current.filter((p) => p.bufferId === activeBufferId).length;
+      // 终端激活时，文件应落到编辑器窗格：优先复用已有编辑器窗格，否则在终端旁新建一个
+      let targetPaneId = activePaneObj.id;
+      let targetBufferId: string | undefined = activePaneObj.bufferId;
+      if (activePaneObj.kind === "terminal") {
+        const editorPane = panesRef.current.find((p) => p.kind === "editor");
+        if (editorPane) {
+          targetPaneId = editorPane.id;
+          targetBufferId = editorPane.bufferId;
+        } else {
+          const newEditorPane: Pane = { id: pid(), kind: "editor", bufferId: buffersRef.current[0]?.id, mode: editorSettings.defaultMode };
+          targetBufferId = newEditorPane.bufferId;
+          spawnPaneBeside(activePaneObj.id, newEditorPane, "lr");
+          targetPaneId = newEditorPane.id;
+        }
+      }
+      // 检查目标编辑器窗格的 buffer 是否被多个窗格共享（分屏同步状态）
+      const activeBufferHolders = panesRef.current.filter((p) => p.bufferId === targetBufferId).length;
       const isSharedBuffer = activeBufferHolders > 1;
-      // 若该文件已在某个缓冲中打开，复用之（同步视图）；否则读取并写入激活缓冲
+      // 若该文件已在某个缓冲中打开，复用之（同步视图）；否则读取并写入目标缓冲
       const existing = buffersRef.current.find((b) => b.fileName === path);
       if (existing) {
-        setPanes((ps) => ps.map((p) => (p.id === activePaneObj.id ? { ...p, bufferId: existing.id } : p)));
+        setPanes((ps) => ps.map((p) => (p.id === targetPaneId ? { ...p, bufferId: existing.id } : p)));
         setSaveStatus("idle");
       } else {
         const text = await readTextFile(path);
         if (openFileGenerationRef.current !== myGeneration) return; // 被更新的文件切换覆盖
         if (isSharedBuffer) {
-          // 分屏共享缓冲状态：创建新缓冲并让激活窗格单独指向它，避免同步窗格也被替换
+          // 分屏共享缓冲状态：创建新缓冲并让目标窗格单独指向它，避免同步窗格也被替换
           const newBuf: FileBuffer = { id: bid(), fileName: path, content: text, savedContent: text, modified: false };
           setBuffers((bs) => [...bs, newBuf]);
-          setPanes((ps) => ps.map((p) => (p.id === activePaneObj.id ? { ...p, bufferId: newBuf.id } : p)));
+          setPanes((ps) => ps.map((p) => (p.id === targetPaneId ? { ...p, bufferId: newBuf.id } : p)));
         } else {
-          // 非共享缓冲：直接更新激活缓冲内容
-          updateBuffer(activePaneObj.bufferId, { content: text, fileName: path, savedContent: text, modified: false });
+          // 非共享缓冲：直接更新目标缓冲内容
+          if (targetBufferId) updateBuffer(targetBufferId, { content: text, fileName: path, savedContent: text, modified: false });
         }
         setSaveStatus("idle");
       }
@@ -1586,6 +1685,51 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     }
   }, []);
 
+  // 默认工作目录：当前文件所在目录 > 仓库根目录 > 空串。
+  const defaultCwd = useCallback((): string => {
+    if (fileName) return fileName.replace(/[/\\][^/\\]*$/, "");
+    if (activeVaultIndex >= 0 && vaults[activeVaultIndex]) return vaults[activeVaultIndex].path;
+    return "";
+  }, [fileName, activeVaultIndex, vaults]);
+
+  // 创建一个终端面板（生成 terminalId 并登记），但不涉及布局插入。
+  const makeTerminalPane = useCallback((cwd: string): Pane => {
+    const tid = bid();
+    const pane: Pane = { id: pid(), kind: "terminal", terminalId: tid, mode: editorSettings.defaultMode };
+    setTerminals((prev) => ({ ...prev, [tid]: { id: tid, cwd } }));
+    return pane;
+  }, [editorSettings.defaultMode]);
+
+  // 在指定激活窗格旁按 dir 方向插入一个新窗格（通用：终端或编辑器均可复用）。
+  const spawnPaneBeside = useCallback((activeId: string, newPane: Pane, dir: "lr" | "tb") => {
+    setPanes((ps) => [...ps, newPane]);
+    const found = findPaneInTree(splitLayoutRef.current, activeId);
+    const keepLeaf: PaneLeaf = found ? found.leaf : { type: "leaf", paneId: activeId, flex: 1 };
+    const newLeaf: PaneLeaf = { type: "leaf", paneId: newPane.id, flex: 1 };
+    const wrapFlex = found?.leaf.flex ?? 1;
+    const replacement: SplitGroup = { type: "group", groupId: gid(), dir, flex: wrapFlex, children: [keepLeaf, newLeaf] };
+    if (!found) setSplitLayout(replacement);
+    else setSplitLayout(replaceNodeByPath(splitLayoutRef.current, found.path, replacement));
+  }, []);
+
+  // 入口：新建一个终端面板，置于当前激活窗格旁（默认左右分屏）。
+  const handleOpenTerminalPane = useCallback((dir: "lr" | "tb" = "lr") => {
+    const activeId = activePaneIdRef.current;
+    const cwd = defaultCwd();
+    const newPane = makeTerminalPane(cwd);
+    spawnPaneBeside(activeId, newPane, dir);
+    setActivePaneId(newPane.id);
+  }, [defaultCwd, makeTerminalPane, spawnPaneBeside]);
+
+  // 在某终端面板旁再分屏出一个新终端（工具栏"分屏"按钮回调）。
+  const handleSplitTerminalBeside = useCallback((paneId: string, dir: "lr" | "tb") => {
+    const tid = panesRef.current.find((p) => p.id === paneId)?.terminalId;
+    const cwd = (tid && terminalsRef.current[tid]?.cwd) || defaultCwd();
+    const newPane = makeTerminalPane(cwd);
+    spawnPaneBeside(paneId, newPane, dir);
+    setActivePaneId(newPane.id);
+  }, [defaultCwd, makeTerminalPane, spawnPaneBeside]);
+
   // 分屏：在当前激活窗格“当前所在层级”，按指定方向插入一个同步克隆（共享 buffer，编辑联动）。
   // - 单窗格时：根变成 SplitGroup(dir = 点击方向，两孩子 = 原 + 新)。
   // - 已有分屏时：不改变其他区域，只在激活窗格的位置把它替换为新的 SplitGroup(dir)，
@@ -1594,11 +1738,20 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     const activeId = activePaneIdRef.current;
     const currentPanes = panesRef.current;
     const active = currentPanes.find((p) => p.id === activeId) ?? currentPanes[0];
-    // 1) 创建新的 Pane（同步克隆），并入 panes 数组
-    const newPane: Pane = { id: pid(), bufferId: active.bufferId, mode: active.mode };
+    // 终端窗格分屏：新建一个独立的终端置于其旁（不共享 PTY）
+    if (active.kind === "terminal") {
+      const tid = active.terminalId;
+      const cwd = (tid && terminalsRef.current[tid]?.cwd) || defaultCwd();
+      const newPane = makeTerminalPane(cwd);
+      spawnPaneBeside(activeId, newPane, dir);
+      setActivePaneId(newPane.id);
+      return;
+    }
+    // 编辑器窗格：同步克隆（共享 buffer），并入 panes 数组
+    const newPane: Pane = { id: pid(), kind: "editor", bufferId: active.bufferId, mode: active.mode };
     setPanes((ps) => [...ps, newPane]);
-    // 2) 在布局树中找到激活窗格的位置 → 用新 SplitGroup(dir) 替换该 leaf 自身：
-    //    两个孩子：[原 leaf(flex=1), 新 leaf(flex=1)]
+    // 在布局树中找到激活窗格的位置 → 用新 SplitGroup(dir) 替换该 leaf 自身：
+    // 两个孩子：[原 leaf(flex=1), 新 leaf(flex=1)]
     const found = findPaneInTree(splitLayoutRef.current, activeId);
     const oldFlex = found?.leaf.flex ?? 1;
     const newLeafActive: PaneLeaf = { type: "leaf", paneId: activeId, flex: 1 };
@@ -1611,7 +1764,20 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       const nextTree = replaceNodeByPath(splitLayoutRef.current, found.path, replacement);
       setSplitLayout(nextTree);
     }
-  }, []);
+  }, [defaultCwd, makeTerminalPane, spawnPaneBeside]);
+
+  // 终端快捷键（Ctrl+`）：toggle —— 无终端则新建；已有终端且当前不在终端则聚焦最近终端；已在终端则无操作。
+  const handleToggleTerminal = useCallback(() => {
+    const current = panesRef.current.find((p) => p.id === activePaneIdRef.current);
+    const hasTerminal = panesRef.current.some((p) => p.kind === "terminal");
+    if (!hasTerminal) {
+      handleOpenTerminalPane("lr");
+      return;
+    }
+    if (current?.kind === "terminal") return; // 已在终端，无操作
+    const tp = panesRef.current.find((p) => p.kind === "terminal");
+    if (tp) setActivePaneId(tp.id);
+  }, [handleOpenTerminalPane]);
 
   // 文件树右键“在新面板打开”：
   // - 活动窗格若有同步兄弟（同 buffer 的另一窗格），则把活动窗格切换为新文件（原文件保留在兄弟窗格）；
@@ -1646,7 +1812,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         focusPaneId = active.id;
       } else {
         // 无同步副本：在激活 leaf 处套一个左右 Group，原 leaf 不变，新 pane 放第二位
-        const newPane: Pane = { id: pid(), bufferId, mode: active.mode };
+        const newPane: Pane = { id: pid(), kind: "editor", bufferId, mode: active.mode };
         setPanes((ps) => [...ps, newPane]);
         const found = findPaneInTree(splitLayoutRef.current, activeId);
         const keepLeaf: PaneLeaf = found ? found.leaf : { type: "leaf", paneId: activeId, flex: 1 };
@@ -1722,7 +1888,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       }
 
       // 新建 pane 绑定新文件 buffer
-      const newPane: Pane = { id: pid(), bufferId, mode: active.mode };
+      const newPane: Pane = { id: pid(), kind: "editor", bufferId, mode: active.mode };
       setPanes((ps) => [...ps, newPane]);
 
       // 布局替换：激活 leaf → SplitGroup(dir)[原leaf, 新leaf]，其余完全不动
@@ -1780,12 +1946,36 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     const remainingSet = new Set(remainingPaneIds);
     const usedBufferIds = new Set<string>();
     panesRef.current.forEach((p) => {
-      if (p.id !== paneId && remainingSet.has(p.id)) usedBufferIds.add(p.bufferId);
+      if (p.id !== paneId && remainingSet.has(p.id) && p.bufferId) usedBufferIds.add(p.bufferId);
+    });
+    // 终端会话销毁统一在此显式处理：kill PTY + 注销前端缓冲/监听。
+    // 不再依赖 TerminalView 卸载时 kill——分屏等布局变化也会卸载并重挂 TerminalView，
+    // 届时进程与屏幕缓冲须保留（按 sessionId 复用），故排除真正关闭时才销毁。
+    const remainingTerminalIds = new Set<string>();
+    panesRef.current.forEach((p) => {
+      if (p.id !== paneId && remainingSet.has(p.id) && p.kind === "terminal" && p.terminalId) {
+        remainingTerminalIds.add(p.terminalId);
+      }
+    });
+    const removedPane = panesRef.current.find((p) => p.id === paneId);
+    if (removedPane?.kind === "terminal" && removedPane.terminalId) {
+      const tid = removedPane.terminalId;
+      if (!remainingTerminalIds.has(tid)) {
+        killTerminal(tid).catch(() => {});
+        unregisterTerminal(tid);
+      }
+    }
+    setTerminals((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((tid) => {
+        if (!remainingTerminalIds.has(tid)) delete next[tid];
+      });
+      return next;
     });
     setBuffers((bs) => {
       // 基于同一时刻的 panes 再次计算，确保批处理中 panes 已变化时不会错删
       const currentPanes = panesRef.current.filter((p) => p.id !== paneId && remainingSet.has(p.id));
-      currentPanes.forEach((p) => usedBufferIds.add(p.bufferId));
+      currentPanes.forEach((p) => { if (p.bufferId) usedBufferIds.add(p.bufferId); });
       // 至少保留一个缓冲（兜底，防止 buffers 为空导致派生 activeBuffer undefined 崩溃）
       if (usedBufferIds.size === 0 && bs.length > 0) usedBufferIds.add(bs[0].id);
       return bs.filter((b) => usedBufferIds.has(b.id));
@@ -1856,6 +2046,21 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 每个窗格从其 bufferId 取内容与文件路径；onChange 路由到该窗格的缓冲；
   // 仅激活窗格的字数回调会更新全局 wordCount。ref 按窗格 id 注册到 paneHandlesRef。
   const renderPane = (pane: Pane) => {
+    // 终端面板：直接渲染 TerminalView，分屏/关闭由父级回调处理
+    if (pane.kind === "terminal" && pane.terminalId) {
+      return (
+        <Suspense fallback={<div className="editor-panel" />}>
+          <TerminalView
+            sessionId={pane.terminalId}
+            cwd={terminals[pane.terminalId]?.cwd ?? ""}
+            theme={theme}
+            onSplit={(dir) => handleSplitTerminalBeside(pane.id, dir)}
+            onClose={() => closePane(pane.id)}
+            onFontSizeChange={showFontSizeToast}
+          />
+        </Suspense>
+      );
+    }
     const buf = buffers.find((b) => b.id === pane.bufferId) ?? buffers[0];
     const refCb = (h: EditorHandle | null) => {
       if (h) paneHandlesRef.current[pane.id] = h;
@@ -1864,22 +2069,24 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     return (
       <EditorErrorBoundary>
-        <Editor
-          ref={refCb}
-          value={buf.content}
-          onChange={(v) => handlePaneChange(pane.id, v)}
-          mode={pane.mode}
-          theme={theme}
-          typewriterMode={typewriterMode}
-          previewMaxWidth={previewMaxWidth}
-          lineHeight={lineHeight}
-          irLineNumbers={irLineNumbers}
-          editorSettings={editorSettings}
-          imageSettings={imageSettings}
-          currentFilePath={buf.fileName}
-          activeVaultPath={activeVaultIndex >= 0 ? vaults[activeVaultIndex]?.path : null}
-          onWordCount={(c) => { if (pane.id === activePaneIdRef.current) setWordCount(c); }}
-        />
+        <Suspense fallback={<div className="editor-panel" />}>
+          <Editor
+            ref={refCb}
+            value={buf.content}
+            onChange={(v) => handlePaneChange(pane.id, v)}
+            mode={pane.mode}
+            theme={theme}
+            typewriterMode={typewriterMode}
+            previewMaxWidth={previewMaxWidth}
+            lineHeight={lineHeight}
+            irLineNumbers={irLineNumbers}
+            editorSettings={editorSettings}
+            imageSettings={imageSettings}
+            currentFilePath={buf.fileName}
+            activeVaultPath={activeVaultIndex >= 0 ? vaults[activeVaultIndex]?.path : null}
+            onWordCount={(c) => { if (pane.id === activePaneIdRef.current) setWordCount(c); }}
+          />
+        </Suspense>
       </EditorErrorBoundary>
     );
   };
@@ -2187,23 +2394,31 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     return () => window.removeEventListener("keydown", handler, { capture: true });
   }, []);
 
-  // 分屏快捷键（Ctrl+\ 左右分屏 / Ctrl+- 上下分屏，配置见 shortcuts.json 的 app.split-lr / split-tb）
+  // 分屏 / 终端快捷键（配置见 shortcuts.json 的 app.split-lr / split-tb / terminal-new）
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (matchShortcut(e, shortcutsConfig.app["split-lr"])) {
         e.preventDefault();
+        // 编辑器（md）或终端窗格均可触发分屏
         if (fileName && isCurrentFileMarkdown) handleSplit("lr");
+        else if (isActiveTerminal) handleSplit("lr");
         return;
       }
       if (matchShortcut(e, shortcutsConfig.app["split-tb"])) {
         e.preventDefault();
         if (fileName && isCurrentFileMarkdown) handleSplit("tb");
+        else if (isActiveTerminal) handleSplit("tb");
+        return;
+      }
+      if (matchShortcut(e, shortcutsConfig.app["terminal-new"])) {
+        e.preventDefault();
+        handleToggleTerminal();
         return;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSplit, fileName, isCurrentFileMarkdown]);
+  }, [handleSplit, handleToggleTerminal, fileName, isCurrentFileMarkdown, isActiveTerminal]);
 
   // 监听 wikilink 点击
   useEffect(() => {
@@ -2618,8 +2833,9 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     { id: "toggle-sidebar", label: t("app.command.labels.toggleSidebar"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("toggle-sidebar"), action: handleSidebarToggle },
     { id: "toggle-mode", label: t("app.command.labels.toggleEditMode"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("toggle-mode"), action: cycleMode },
     { id: "toggle-typewriter", label: t("app.command.labels.toggleTypewriter"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("toggle-typewriter"), action: toggleTypewriterMode },
-    { id: "split-lr", label: t("app.menu.splitLeftRight"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("split-lr"), aliases: t("app.command.aliases.splitLeftRight").split(", "), action: () => { if (fileName && isCurrentFileMarkdown) handleSplit("lr"); } },
-    { id: "split-tb", label: t("app.menu.splitTopBottom"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("split-tb"), aliases: t("app.command.aliases.splitTopBottom").split(", "), action: () => { if (fileName && isCurrentFileMarkdown) handleSplit("tb"); } },
+    { id: "split-lr", label: t("app.menu.splitLeftRight"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("split-lr"), aliases: t("app.command.aliases.splitLeftRight").split(", "), action: () => { if (fileName && isCurrentFileMarkdown) handleSplit("lr"); else if (isActiveTerminal) handleSplit("lr"); } },
+    { id: "split-tb", label: t("app.menu.splitTopBottom"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("split-tb"), aliases: t("app.command.aliases.splitTopBottom").split(", "), action: () => { if (fileName && isCurrentFileMarkdown) handleSplit("tb"); else if (isActiveTerminal) handleSplit("tb"); } },
+    { id: "new-terminal", label: t("app.command.labels.newTerminal"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("terminal-new"), aliases: t("app.command.aliases.newTerminal").split(", "), action: () => handleOpenTerminalPane("lr") },
     { id: "open-mindmap", label: t("app.command.labels.openMindmap"), category: t("app.command.categories.view"), shortcut: getCommandShortcut("open-mindmap"), action: () => {
       localStorage.setItem("zmd-mindmap-mode", "document");
       localStorage.setItem("zmd-mindmap-content", content);
@@ -2835,8 +3051,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                 <button
                   className="window-control-btn"
                   title={t("app.menu.splitLeftRight")}
-                  disabled={!fileName || !isCurrentFileMarkdown}
-                  onClick={() => { if (!fileName || !isCurrentFileMarkdown) return; handleSplit('lr'); }}
+                  disabled={(!fileName || !isCurrentFileMarkdown) && !isActiveTerminal}
+                  onClick={() => { if ((!fileName || !isCurrentFileMarkdown) && !isActiveTerminal) return; handleSplit('lr'); }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -2848,8 +3064,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                 <button
                   className="window-control-btn"
                   title={t("app.menu.splitTopBottom")}
-                  disabled={!fileName || !isCurrentFileMarkdown}
-                  onClick={() => { if (!fileName || !isCurrentFileMarkdown) return; handleSplit('tb'); }}
+                  disabled={(!fileName || !isCurrentFileMarkdown) && !isActiveTerminal}
+                  onClick={() => { if ((!fileName || !isCurrentFileMarkdown) && !isActiveTerminal) return; handleSplit('tb'); }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -2932,10 +3148,20 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                       </svg>
                       <span className="editor-topbar-more-menu-label">{t("app.menu.favorite")}</span>
                     </div>
+                    <div
+                      className="editor-topbar-more-menu-item"
+                      onClick={() => { handleOpenTerminalPane("lr"); setMoreMenuOpen(false); }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="4 17 10 11 4 5" />
+                        <line x1="12" y1="19" x2="20" y2="19" />
+                      </svg>
+                      <span className="editor-topbar-more-menu-label">{t("app.menu.newTerminal")}</span>
+                    </div>
                     <div className="editor-topbar-more-menu-divider" />
                     <div
-                      className={`editor-topbar-more-menu-item${(!fileName || !isCurrentFileMarkdown) ? ' disabled' : ''}${getImmediateParentGroupDir(splitLayout, activePaneId) === 'lr' ? ' active' : ''}`}
-                      onClick={() => { if (!fileName || !isCurrentFileMarkdown) return; handleSplit('lr'); setMoreMenuOpen(false); }}
+                      className={`editor-topbar-more-menu-item${(!fileName || !isCurrentFileMarkdown) && !isActiveTerminal ? ' disabled' : ''}${getImmediateParentGroupDir(splitLayout, activePaneId) === 'lr' ? ' active' : ''}`}
+                      onClick={() => { if ((!fileName || !isCurrentFileMarkdown) && !isActiveTerminal) return; handleSplit('lr'); setMoreMenuOpen(false); }}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -2958,8 +3184,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                       </button>
                     </div>
                     <div
-                      className={`editor-topbar-more-menu-item${(!fileName || !isCurrentFileMarkdown) ? ' disabled' : ''}${getImmediateParentGroupDir(splitLayout, activePaneId) === 'tb' ? ' active' : ''}`}
-                      onClick={() => { if (!fileName || !isCurrentFileMarkdown) return; handleSplit('tb'); setMoreMenuOpen(false); }}
+                      className={`editor-topbar-more-menu-item${(!fileName || !isCurrentFileMarkdown) && !isActiveTerminal ? ' disabled' : ''}${getImmediateParentGroupDir(splitLayout, activePaneId) === 'tb' ? ' active' : ''}`}
+                      onClick={() => { if ((!fileName || !isCurrentFileMarkdown) && !isActiveTerminal) return; handleSplit('tb'); setMoreMenuOpen(false); }}
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -3193,7 +3419,14 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   <EmbeddedCanvasView />
                 </Suspense>
               </div>
-            ) : !fileName && !content.trim() ? (
+            ) : !fileName && !content.trim() && !layoutHasTerminal &&
+                // initialFilePath / hasExternalFile 明确有文件 → 不显示欢迎
+                // hasPendingFileResult === null：快查未返回 → 保持纯白（不闪现欢迎，避免"先欢迎再编辑器"）
+                // hasPendingFileResult === true：有文件待处理 → 保持纯白
+                // 只有 hasPendingFileResult === false：明确没有文件 → 显示欢迎卡片
+                hasPendingFileResult === false &&
+                !initialFilePath &&
+                !hasExternalFile ? (
               <div className="editor-welcome">
                 <div className="welcome-hint">
                   <div className="welcome-hint-item">
@@ -3210,7 +3443,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </div>
                 </div>
               </div>
-            ) : isCurrentFileMarkdown ? (
+            ) : isCurrentFileMarkdown || layoutHasTerminal ? (
               // 递归渲染布局树：根若为 leaf 就是单窗格，否则为（嵌套）分屏组。
               (() => {
                 const totalPanes = collectPaneIds(splitLayout).length;
@@ -3275,13 +3508,15 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
               })()
             ) : (
               <EditorErrorBoundary>
-                <CodeMirrorEditor
-                  ref={codeMirrorRef}
-                  value={content}
-                  onChange={handleChange}
-                  onWordCount={setWordCount}
-                  filePath={fileName}
-                />
+                <Suspense fallback={<div className="editor-panel" />}>
+                  <CodeMirrorEditor
+                    ref={codeMirrorRef}
+                    value={content}
+                    onChange={handleChange}
+                    onWordCount={setWordCount}
+                    filePath={fileName}
+                  />
+                </Suspense>
               </EditorErrorBoundary>
             )}
           </div>

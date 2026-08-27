@@ -1,6 +1,6 @@
 [package]
 name = "tydora"
-version = "0.2.1"
+version = "0.2.2"
 description = "A modern Markdown editor built with Tauri"
 authors = ["you"]
 edition = "2021"
@@ -27,6 +27,7 @@ notify = "6"
 reqwest = { version = "0.12", features = ["json", "gzip", "deflate", "brotli"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 base64 = "0.22"
+portable-pty = "0.8"
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 url = "2"
