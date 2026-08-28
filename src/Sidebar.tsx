@@ -359,7 +359,9 @@ async function countImagePathsAffected(
     for (const match of content.matchAll(MD_IMAGE_REGEX)) {
       const imgPath = match[1];
       if (isExternalOrInline(imgPath)) continue;
-      const resolved = resolveRelativePath(docDir, imgPath);
+       const resolved = imgPath.startsWith("/")
+       ? resolveRelativePath(vaultPath, imgPath.slice(1))
+       : resolveRelativePath(docDir, imgPath);
       if (resolved.startsWith(oldFolderPath + sep) || resolved === oldFolderPath) {
         pathsCount++;
         fileAffected = true;
@@ -369,7 +371,9 @@ async function countImagePathsAffected(
     for (const match of content.matchAll(HTML_IMG_REGEX)) {
       const imgPath = match[1];
       if (isExternalOrInline(imgPath)) continue;
-      const resolved = resolveRelativePath(docDir, imgPath);
+       const resolved = imgPath.startsWith("/")
+       ? resolveRelativePath(vaultPath, imgPath.slice(1))
+       : resolveRelativePath(docDir, imgPath);
       if (resolved.startsWith(oldFolderPath + sep) || resolved === oldFolderPath) {
         pathsCount++;
         fileAffected = true;
@@ -402,7 +406,9 @@ async function updateImagePathsForFolder(
     // 处理 Markdown 图片: ![alt](path)
     newContent = newContent.replace(MD_IMAGE_REGEX, (fullMatch, imgPath: string) => {
       if (isExternalOrInline(imgPath)) return fullMatch;
-      const resolved = resolveRelativePath(docDir, imgPath);
+       const resolved = imgPath.startsWith("/")
+       ? resolveRelativePath(vaultPath, imgPath.slice(1))
+       : resolveRelativePath(docDir, imgPath);
       if (resolved.startsWith(oldFolderPath + sep) || resolved === oldFolderPath) {
         const relativePart = resolved.slice(oldFolderPath.length);
         const newAbsolute = newFolderPath + relativePart;
@@ -418,7 +424,9 @@ async function updateImagePathsForFolder(
     // 处理 HTML img: <img src="path" ...>
     newContent = newContent.replace(HTML_IMG_REGEX, (fullMatch, imgPath: string) => {
       if (isExternalOrInline(imgPath)) return fullMatch;
-      const resolved = resolveRelativePath(docDir, imgPath);
+       const resolved = imgPath.startsWith("/")
+       ? resolveRelativePath(vaultPath, imgPath.slice(1))
+       : resolveRelativePath(docDir, imgPath);
       if (resolved.startsWith(oldFolderPath + sep) || resolved === oldFolderPath) {
         const relativePart = resolved.slice(oldFolderPath.length);
         const newAbsolute = newFolderPath + relativePart;
