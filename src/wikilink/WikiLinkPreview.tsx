@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import katex from "katex";
+import { stripStyleBlocks } from "../Editor/extensions/strip-style";
 import { mathMarkdownItPlugin } from "../Editor/extensions/math";
 import { LinkIndexService } from "./LinkIndexService";
 import { applyOutsideCodeSpans } from "./codeSpanGuard";
@@ -47,7 +48,7 @@ function renderMarkdown(text: string): string {
       return `${indent}<ul data-type="taskList"><li${dataChecked}><label><input type="checkbox"${checkedAttr}></label><p>${content}</p></li></ul>`;
     }
   );
-  return md.render(processed);
+return md.render(stripStyleBlocks(processed));
 }
 
 function setCache(key: string, html: string) {
