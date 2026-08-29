@@ -29,6 +29,7 @@ import { Markdown } from "tiptap-markdown";
 import { defaultMarkdownSerializer } from "prosemirror-markdown";
 import { common, createLowlight } from "lowlight";
 import { Frontmatter } from "./extensions/frontmatter";
+import { StripStyle } from "./extensions/strip-style";
 import { Callout } from "./extensions/callout";
 import { Mermaid } from "./extensions/mermaid";
 import { WikiLink } from "./extensions/wiki-link";
@@ -878,6 +879,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
           transformPastedText: true,
           transformCopiedText: true,
         }),
+        StripStyle,
         ...(editorSettings?.frontmatter !== false ? [Frontmatter] : []),
         ...(editorSettings?.callout !== false ? [Callout] : []),
         ...(editorSettings?.mermaid !== false ? [Mermaid] : []),
