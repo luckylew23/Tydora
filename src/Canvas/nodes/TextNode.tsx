@@ -5,6 +5,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import { Markdown } from 'tiptap-markdown';
 import { WikiLink } from '../../Editor/extensions/wiki-link';
+import { StripStyle } from '../../Editor/extensions/strip-style';
 import { getCanvasColor } from '../canvas-utils';
 import { useCanvasStore } from '../canvas-store';
 import { useNearestEdge } from '../useNearestEdge';
@@ -33,6 +34,7 @@ function TextNode({ data, selected, id }: NodeProps) {
         showOnlyCurrent: false,
       }),
       WikiLink,
+      StripStyle,
       Markdown.configure({
         html: true,
         breaks: true,
