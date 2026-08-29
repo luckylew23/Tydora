@@ -14,6 +14,7 @@ import { resolveRelativePath } from "./services";
 import { relativePath as computeRelativePath } from "./services/ImageManager";
 import { BookmarksPanel } from "./Bookmarks";
 import "./Sidebar.css";
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface VaultInfo {
