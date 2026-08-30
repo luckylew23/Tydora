@@ -96,13 +96,30 @@
 }
 
 @keyframes traffic-light-blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+
+  0%,
+  50% {
+    opacity: 1;
+  }
+
+  51%,
+  100% {
+    opacity: 0;
+  }
 }
 
 @keyframes traffic-light-flash {
-  0%, 62.5% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(0.8); }
+
+  0%,
+  62.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
 }
 
 .canvas-window-content {
@@ -248,12 +265,15 @@
 .react-flow__handle-top {
   transform: translate(-50%, -50%);
 }
+
 .react-flow__handle-bottom {
   transform: translate(-50%, 50%);
 }
+
 .react-flow__handle-left {
   transform: translate(-50%, -50%);
 }
+
 .react-flow__handle-right {
   transform: translate(50%, -50%);
 }
@@ -333,6 +353,7 @@
   opacity: 0;
   transition: opacity 0.15s ease;
 }
+
 .canvas-resize-line.left:hover::after {
   opacity: 1;
 }
@@ -349,6 +370,7 @@
   opacity: 0;
   transition: opacity 0.15s ease;
 }
+
 .canvas-resize-line.right:hover::after {
   opacity: 1;
 }
@@ -365,6 +387,7 @@
   opacity: 0;
   transition: opacity 0.15s ease;
 }
+
 .canvas-resize-line.top:hover::after {
   opacity: 1;
 }
@@ -381,6 +404,7 @@
   opacity: 0;
   transition: opacity 0.15s ease;
 }
+
 .canvas-resize-line.bottom:hover::after {
   opacity: 1;
 }
@@ -478,7 +502,7 @@
 }
 
 .canvas-text-editor p {
-  margin: 0.5em 0;
+  margin: var(--editor-paragraph-spacing, 0.5em) 0;
 }
 
 /* TipTap Placeholder：空内容时显示"输入@插入"提示 */
@@ -493,7 +517,7 @@
   pointer-events: none;
 }
 
-.canvas-text-editor > :first-child {
+.canvas-text-editor> :first-child {
   margin-top: 0;
 }
 
@@ -507,15 +531,16 @@
   margin: 0.25em 0;
 }
 
-.canvas-text-editor li > p {
+.canvas-text-editor li>p {
   margin: 0;
 }
 
 /* 行内代码 - 与 IR 模式一致 */
-.canvas-text-editor :not(pre) > code {
+.canvas-text-editor :not(pre)>code {
   background: var(--bg-code-inline, rgba(0, 0, 0, 0.06));
-  padding: 0.2em 0.4em;
-  border-radius: 4px;
+  padding: var(--padding-code-inline-y, 0.2em) var(--padding-code-inline-x, 0.4em);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: var(--radius-code-inline, 4px);
   font-family: var(--font-mono);
   font-size: 0.9em;
   color: var(--text-code, #e83e8c);
@@ -529,22 +554,24 @@
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: 0.9em;
-  line-height: 1.5;
+  line-height: var(--code-line-height, 1.5);
 }
 
 .canvas-text-editor pre code {
   background: transparent;
   padding: 0;
   font-size: inherit;
+  font-family: inherit;
   color: inherit;
 }
 
 /* 引用 - 与 IR 模式一致 */
 .canvas-text-editor blockquote {
-  border-left: 3px solid var(--border);
-  padding-left: 1em;
+  border-left: var(--blockquote-border-width, 3px) solid var(--blockquote-border, var(--border));
+  background: var(--blockquote-bg, transparent);
+  padding: var(--padding-blockquote-y, 4px) var(--padding-blockquote-x, 16px);
   margin: 1em 0;
-  color: var(--text-secondary);
+  color: var(--blockquote-text, var(--text-secondary));
 }
 
 /* 加粗 - 与 IR 模式一致 */
@@ -739,10 +766,10 @@
 }
 
 .canvas-note-editor p {
-  margin: 0.5em 0;
+  margin: var(--editor-paragraph-spacing, 0.5em) 0;
 }
 
-.canvas-note-editor > :first-child {
+.canvas-note-editor> :first-child {
   margin-top: 0;
 }
 
@@ -756,15 +783,16 @@
   margin: 0.25em 0;
 }
 
-.canvas-note-editor li > p {
+.canvas-note-editor li>p {
   margin: 0;
 }
 
 /* 行内代码 - 与 IR 模式一致 */
-.canvas-note-editor :not(pre) > code {
+.canvas-note-editor :not(pre)>code {
   background: var(--bg-code-inline, rgba(0, 0, 0, 0.06));
-  padding: 0.2em 0.4em;
-  border-radius: 4px;
+  padding: var(--padding-code-inline-y, 0.2em) var(--padding-code-inline-x, 0.4em);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: var(--radius-code-inline, 4px);
   font-family: var(--font-mono);
   font-size: 0.9em;
   color: var(--text-code, #e83e8c);
@@ -778,22 +806,24 @@
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: 0.9em;
-  line-height: 1.5;
+  line-height: var(--code-line-height, 1.5);
 }
 
 .canvas-note-editor pre code {
   background: transparent;
   padding: 0;
   font-size: inherit;
+  font-family: inherit;
   color: inherit;
 }
 
 /* 引用 - 与 IR 模式一致 */
 .canvas-note-editor blockquote {
-  border-left: 3px solid var(--border);
-  padding-left: 1em;
+  border-left: var(--blockquote-border-width, 3px) solid var(--blockquote-border, var(--border));
+  background: var(--blockquote-bg, transparent);
+  padding: var(--padding-blockquote-y, 4px) var(--padding-blockquote-x, 16px);
   margin: 1em 0;
-  color: var(--text-secondary);
+  color: var(--blockquote-text, var(--text-secondary));
 }
 
 /* 加粗 - 与 IR 模式一致 */
@@ -856,34 +886,40 @@
   color: var(--text-secondary);
 }
 
-/* Frontmatter 块 */
-.canvas-note-editor [data-type="frontmatter"] {
-  background: var(--bg-secondary, #f5f5f5);
-  border: 1px solid var(--border, #e0e0e0);
-  border-radius: 8px;
-  margin: 0 0 1em 0;
+/* Frontmatter 块 — 与编辑器主题一致：避免 overflow:hidden / clip-path 触发 WebKit 幽灵选区 */
+.canvas-note-editor [data-type="frontmatter"],
+.canvas-note-editor .frontmatter-node {
+  background: var(--metadata-bg, var(--bg-secondary, #f5f5f5));
+  border: 1px solid var(--metadata-border, var(--border, #e0e0e0));
+  border-radius: var(--radius-metadata, 8px);
+  margin: 0;
   font-size: 0.85em;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
+  clip-path: none;
 }
 
+.canvas-note-editor [data-type="frontmatter"] .frontmatter-content,
+.canvas-note-editor .frontmatter-node .frontmatter-content,
 .canvas-note-editor [data-type="frontmatter"] pre {
   margin: 0;
   padding: 12px 16px;
-  overflow-x: auto;
+  overflow: visible;
   background: transparent;
-  font-family: var(--editor-font, "JetBrains Mono", "Fira Code", "Consolas", monospace);
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", "Consolas", monospace);
   font-size: inherit;
   line-height: 1.6;
   border: none;
   border-radius: 0;
   tab-size: 2;
+  white-space: pre-wrap;
 }
 
 .canvas-note-editor [data-type="frontmatter"] pre code {
   background: none;
   padding: 0;
   font-size: inherit;
+  font-family: inherit;
   border-radius: 0;
 }
 
@@ -1267,12 +1303,29 @@
 }
 
 /* Node color presets */
-.canvas-color-red { background: #ef4444; }
-.canvas-color-orange { background: #f97316; }
-.canvas-color-yellow { background: #eab308; }
-.canvas-color-green { background: #22c55e; }
-.canvas-color-cyan { background: #06b6d4; }
-.canvas-color-purple { background: #a855f7; }
+.canvas-color-red {
+  background: #ef4444;
+}
+
+.canvas-color-orange {
+  background: #f97316;
+}
+
+.canvas-color-yellow {
+  background: #eab308;
+}
+
+.canvas-color-green {
+  background: #22c55e;
+}
+
+.canvas-color-cyan {
+  background: #06b6d4;
+}
+
+.canvas-color-purple {
+  background: #a855f7;
+}
 
 /* Canvas Toolbar - Obsidian style floating */
 .canvas-toolbar {
@@ -1423,11 +1476,12 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--menu-item-padding-y) var(--menu-item-padding-x);
   border: none;
   background: transparent;
   color: var(--text-primary);
   font-size: 13px;
+  line-height: var(--menu-item-line-height);
   cursor: pointer;
   border-radius: 4px;
   transition: background 0.1s;
@@ -1446,7 +1500,7 @@
 .canvas-context-menu-divider {
   height: 1px;
   background: var(--border);
-  margin: 4px 0;
+  margin: var(--menu-divider-margin-y) 0;
 }
 
 /* Link Input Popover */
@@ -1856,8 +1910,13 @@
 }
 
 @keyframes confirm-dialog-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .confirm-dialog {
@@ -1872,8 +1931,15 @@
 }
 
 @keyframes confirm-dialog-scale-in {
-  from { transform: scale(0.95); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .confirm-dialog-icon {

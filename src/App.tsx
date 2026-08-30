@@ -30,6 +30,8 @@ import { XhsPreviewPanel } from "./export/xiaohongshu";
 import { emit, listen } from "@tauri-apps/api/event";
 import { loadImageSettings, type ImageSettings } from "./services";
 import { loadEditorSettings, type EditorSettings, EDITOR_SETTINGS_KEY, SHORTCUTS_KEY, GRAPH_SETTINGS_KEY, DEFAULT_GRAPH } from "./Settings";
+import { applyFontSettings } from "./utils/systemFonts";
+import { applyMenuDensity, applyEditorSpacingFromSettings, normalizeMenuDensity } from "./utils/menuDensity";
 import { checkForUpdate, downloadAndInstall, relaunchApp, exitApp, isPortableVersion, type UpdateInfo } from "./services";
 import { LinkIndexService } from "./wikilink";
 import { WikiLinkAutocomplete } from "./wikilink";
@@ -67,7 +69,7 @@ import "./tags/Tag.css";
 import "./tags/TagAutocomplete.css";
 import "./components/FindReplaceDialog.css";
 import shortcutsConfig from "./config/shortcuts.json";
-import { matchShortcut } from "./Editor/shortcuts";
+import { matchShortcut, formatShortcutDisplay, formatShortcutKey, loadShortcuts, getShortcutKeys } from "./Editor/shortcuts";
 import { track, trackPageview, hasConsentChoice, isAnalyticsEnabled, setAnalyticsEnabled, ANALYTICS_EVENTS } from "./analytics";
 import { ConsentDialog } from "./analytics/ConsentDialog";
 
@@ -135,14 +137,16 @@ function isMarkdownFile(fileName: string): boolean {
   return ["md", "markdown", "mdx"].includes(ext);
 }
 
-// 命令面板显示快捷键：优先取 commandDisplay，其次取 editor，再取 app 配置
+// 命令面板显示快捷键：优先取 editor / app 配置，并用平台相关符号格式化（macOS：Ctrl→⌘）
 function getCommandShortcut(id: string): string | undefined {
-  const display = (shortcutsConfig.commandDisplay as Record<string, string>)[id];
-  if (display) return display;
   const item = shortcutsConfig.editor.find((s) => s.id === id);
-  if (item) return item.keys.join("+");
+  if (item?.keys?.length) return formatShortcutDisplay(item.keys);
   const appShortcut = shortcutsConfig.app[id as keyof typeof shortcutsConfig.app];
-  return appShortcut ? appShortcut.join("+") : undefined;
+  if (appShortcut) return formatShortcutDisplay(appShortcut);
+  const display = (shortcutsConfig.commandDisplay as Record<string, string>)[id];
+  if (!display) return undefined;
+  // commandDisplay 是 "Ctrl+S" 字符串，拆开后再按平台格式化
+  return formatShortcutDisplay(display.split("+"));
 }
 
 // ── N 窗格“共享缓冲” + 树形嵌套分屏模型 ──
@@ -424,6 +428,12 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const [typewriterMode, setTypewriterMode] = useState(() => s.typewriterMode ?? false);
   const [previewMaxWidth, setPreviewMaxWidth] = useState(() => s.previewMaxWidth ?? 800);
   const [lineHeight, setLineHeight] = useState(() => s.lineHeight ?? 1.6);
+  const [paragraphSpacing, setParagraphSpacing] = useState(() =>
+    typeof s.paragraphSpacing === "number" ? s.paragraphSpacing : 0.5,
+  );
+  const [codeLineHeight, setCodeLineHeight] = useState(() =>
+    typeof s.codeLineHeight === "number" ? s.codeLineHeight : 1.5,
+  );
   const [irLineNumbers, setIrLineNumbers] = useState(() => s.irLineNumbers ?? true);
   // 双击 .md 文件外部打开时，是否展开侧栏并自动切换到大纲视图（默认开启）
   const [expandOutlineOnOpen, setExpandOutlineOnOpen] = useState(() => s.expandOutlineOnOpen ?? true);
@@ -483,51 +493,47 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     const applySettings = () => {
       try {
         const raw = localStorage.getItem("zmd-general-settings");
-        if (raw) {
-          const settings = JSON.parse(raw);
-          if (settings.editorFont) {
-            document.documentElement.style.setProperty("--editor-font", settings.editorFont);
-            // 按需加载 LXGW 系列字体
-            if (settings.editorFont.includes("LXGW WenKai") && !document.getElementById("lxgw-wenkai-font")) {
-              const link = document.createElement("link");
-              link.id = "lxgw-wenkai-font";
-              link.rel = "stylesheet";
-              link.href = "https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css";
-              document.head.appendChild(link);
-            }
-            if (settings.editorFont.includes("LXGW XinXiHei") && !document.getElementById("lxgw-xinxihei-font")) {
-              const link = document.createElement("link");
-              link.id = "lxgw-xinxihei-font";
-              link.rel = "stylesheet";
-              link.href = "https://cdn.jsdelivr.net/npm/lxgw-xinxihei-webfont@1.7.0/style.css";
-              document.head.appendChild(link);
-            }
-          }
-          if (settings.fontSize) {
-            document.documentElement.style.setProperty("--editor-font-size", settings.fontSize + "px");
-          }
-          if (typeof settings.autoHideTopbar === 'boolean') {
-            setAutoHideTopbar(settings.autoHideTopbar);
-          }
-          if (typeof settings.autoHideTopbarOnCollapse === 'boolean') {
-            setAutoHideTopbarOnCollapse(settings.autoHideTopbarOnCollapse);
-          }
-          if (typeof settings.typewriterMode === 'boolean') {
-            setTypewriterMode(settings.typewriterMode);
-          }
-          if (typeof settings.previewMaxWidth === 'number') {
-            setPreviewMaxWidth(settings.previewMaxWidth);
-          }
-          if (typeof settings.lineHeight === 'number') {
-            setLineHeight(settings.lineHeight);
-          }
-          if (typeof settings.irLineNumbers === 'boolean') {
-            setIrLineNumbers(settings.irLineNumbers);
-          }
-          if (typeof settings.expandOutlineOnOpen === 'boolean') {
-            setExpandOutlineOnOpen(settings.expandOutlineOnOpen);
-          }
+        const settings = raw ? JSON.parse(raw) : {};
+        applyFontSettings({
+          editorFont: settings.editorFont ?? "system",
+          codeFont: settings.codeFont ?? "system",
+          codeFontSize:
+            typeof settings.codeFontSize === "number" ? settings.codeFontSize : 14,
+        });
+        if (settings.fontSize) {
+          document.documentElement.style.setProperty("--editor-font-size", settings.fontSize + "px");
         }
+        if (typeof settings.autoHideTopbar === 'boolean') {
+          setAutoHideTopbar(settings.autoHideTopbar);
+        }
+        if (typeof settings.autoHideTopbarOnCollapse === 'boolean') {
+          setAutoHideTopbarOnCollapse(settings.autoHideTopbarOnCollapse);
+        }
+        if (typeof settings.typewriterMode === 'boolean') {
+          setTypewriterMode(settings.typewriterMode);
+        }
+        if (typeof settings.previewMaxWidth === 'number') {
+          setPreviewMaxWidth(settings.previewMaxWidth);
+        }
+        if (typeof settings.lineHeight === 'number') {
+          setLineHeight(settings.lineHeight);
+        }
+        if (typeof settings.paragraphSpacing === "number") {
+          setParagraphSpacing(Math.min(2, Math.max(0, settings.paragraphSpacing)));
+        }
+        if (typeof settings.codeLineHeight === "number") {
+          setCodeLineHeight(Math.min(2.4, Math.max(1.2, settings.codeLineHeight)));
+        }
+        applyEditorSpacingFromSettings(settings);
+        if (typeof settings.irLineNumbers === 'boolean') {
+          setIrLineNumbers(settings.irLineNumbers);
+        }
+        if (typeof settings.expandOutlineOnOpen === 'boolean') {
+          setExpandOutlineOnOpen(settings.expandOutlineOnOpen);
+        }
+        document.documentElement.dataset.codeBlockToolbar =
+          settings.codeBlockToolbarStyle === "classic" ? "classic" : "minimal";
+        applyMenuDensity(normalizeMenuDensity(settings.menuDensity));
       } catch {}
     };
     applySettings();
@@ -548,34 +554,99 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
 
   // Ctrl + 滚轮：在编辑区调整字号（范围与设置面板一致 10-24px，持久化到 zmd-general-settings）
   useEffect(() => {
-    const container = document.querySelector<HTMLElement>(".editor-container");
-    if (!container) return;
-    // React 的 onWheel 是被动监听、无法 preventDefault，这里用原生非被动监听器
-    // 避免触发 Chromium 默认的 Ctrl+滚轮页面缩放
+    // 收集事件目标到 .editor-container 之间所有可滚动祖先的当前位置
+    const collectScrollLocks = (target: HTMLElement | null) => {
+      const locks: { el: HTMLElement; top: number; left: number; height: number }[] = [];
+      let el: HTMLElement | null = target;
+      while (el) {
+        if (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) {
+          locks.push({
+            el,
+            top: el.scrollTop,
+            left: el.scrollLeft,
+            height: el.scrollHeight,
+          });
+        }
+        if (el.classList.contains("editor-container")) break;
+        el = el.parentElement;
+      }
+      return locks;
+    };
+
+    const restoreScrollLocks = (
+      locks: { el: HTMLElement; top: number; left: number; height: number }[],
+      proportional: boolean,
+    ) => {
+      for (const lock of locks) {
+        if (proportional && lock.height > 0) {
+          const ratio = lock.top / lock.height;
+          lock.el.scrollTop = ratio * lock.el.scrollHeight;
+        } else {
+          lock.el.scrollTop = lock.top;
+        }
+        lock.el.scrollLeft = lock.left;
+      }
+    };
+
+    // 挂在 document 捕获阶段，确保先于 React Flow / 编辑器滚动处理；
+    // 字号变更后还会按比例恢复 scrollTop，避免重排造成“还在滚动”的观感。
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.altKey || e.shiftKey) return;
-      // 滚轮落在终端面板内时，交给终端自己的缩放处理，避免“聚焦终端却连编辑器一起缩放”。
       const targetEl = e.target as HTMLElement | null;
-      if (targetEl && targetEl.closest(".terminal-pane")) return;
+      if (!targetEl) return;
+      const editorRoot = targetEl.closest(".editor-container");
+      if (!editorRoot) return;
+      if (targetEl.closest(".terminal-pane")) return;
+
       e.preventDefault();
+      e.stopImmediatePropagation();
+
+      const locks = collectScrollLocks(targetEl);
+      // 冻结 React Flow 视口（画布缩放用 transform，不是 scrollTop）
+      const rfViewport = editorRoot.querySelector(".react-flow__viewport") as HTMLElement | null;
+      const rfTransform = rfViewport?.style.transform ?? null;
+
       const dir = e.deltaY < 0 ? 1 : -1; // 向上滚动放大，向下滚动缩小
+      let changed = false;
       try {
-        // 从 localStorage 读取当前字号并更新（generalSettings 状态在设置窗口 Settings.tsx 中管理）
         const raw = localStorage.getItem("zmd-general-settings");
         const settings = raw ? JSON.parse(raw) : {};
         const current = typeof settings.fontSize === "number" ? settings.fontSize : 16;
+        const currentMono =
+          typeof settings.codeFontSize === "number" ? settings.codeFontSize : 14;
         const next = Math.min(24, Math.max(10, Math.round(current) + dir));
-        if (next === current) return;
-        settings.fontSize = next;
-        localStorage.setItem("zmd-general-settings", JSON.stringify(settings));
-        document.documentElement.style.setProperty("--editor-font-size", next + "px");
-        // 右上角显示当前字号，停止滚动 1.5s 后自动消失
-        showFontSizeToast(next);
+        const nextMono = Math.min(24, Math.max(10, Math.round(currentMono) + dir));
+        if (next !== current || nextMono !== currentMono) {
+          settings.fontSize = next;
+          settings.codeFontSize = nextMono;
+          localStorage.setItem("zmd-general-settings", JSON.stringify(settings));
+          document.documentElement.style.setProperty("--editor-font-size", next + "px");
+          document.documentElement.style.setProperty("--font-mono-size", nextMono + "px");
+          showFontSizeToast(next);
+          changed = true;
+        }
       } catch {}
+
+      // 先立刻锁回原位置，阻止本轮滚轮改动 scrollTop / 画布 transform
+      restoreScrollLocks(locks, false);
+      if (rfViewport && rfTransform != null) {
+        rfViewport.style.transform = rfTransform;
+      }
+
+      // 字号变更引发重排后，按文档比例恢复，避免内容“跳着滚”
+      if (changed) {
+        requestAnimationFrame(() => {
+          restoreScrollLocks(locks, true);
+          if (rfViewport && rfTransform != null) {
+            rfViewport.style.transform = rfTransform;
+          }
+        });
+      }
     };
-    container.addEventListener("wheel", onWheel, { passive: false });
-    return () => container.removeEventListener("wheel", onWheel);
+
+    document.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => document.removeEventListener("wheel", onWheel, { capture: true });
   }, []);
 
   // 卸载时清理字号提示的自动消失定时器
@@ -2184,6 +2255,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
             typewriterMode={typewriterMode}
             previewMaxWidth={previewMaxWidth}
             lineHeight={lineHeight}
+            paragraphSpacing={paragraphSpacing}
+            codeLineHeight={codeLineHeight}
             irLineNumbers={irLineNumbers}
             editorSettings={editorSettings}
             imageSettings={imageSettings}
@@ -2413,6 +2486,29 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [handleClose, closePane, vimShouldTakeOver]);
+
+  // Ctrl+,（macOS：⌘+,）切换设置窗口；可在设置-快捷键中自定义
+  useEffect(() => {
+    const handler = async (e: KeyboardEvent) => {
+      const keys = getShortcutKeys(loadShortcuts(), "open-settings");
+      const fallback = shortcutsConfig.app["open-settings"] ?? ["Ctrl", ","];
+      if (!matchShortcut(e, keys.length ? keys : fallback)) return;
+      e.preventDefault();
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const existing = await WebviewWindow.getByLabel("settings");
+        if (existing) {
+          await existing.close();
+        } else {
+          await invoke("open_settings_window");
+        }
+      } catch {
+        invoke("open_settings_window").catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const toggleTypewriterMode = useCallback(() => {
     setTypewriterMode((prev: boolean) => !prev);
@@ -3115,7 +3211,16 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     { id: "close", label: t("app.command.labels.closeWindow"), category: t("app.command.categories.window"), action: handleClose },
 
     // 设置
-    { id: "open-settings", label: t("app.command.labels.openSettings"), category: t("app.command.categories.settings"), action: () => invoke("open_settings_window") },
+    { id: "open-settings", label: t("app.command.labels.openSettings"), category: t("app.command.categories.settings"), shortcut: getCommandShortcut("open-settings"), action: async () => {
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const existing = await WebviewWindow.getByLabel("settings");
+        if (existing) await existing.close();
+        else await invoke("open_settings_window");
+      } catch {
+        invoke("open_settings_window");
+      }
+    } },
     { id: "settings-general", label: t("app.command.labels.generalSettings"), category: t("app.command.categories.settings"), aliases: t("app.command.aliases.generalSettings").split(", "), action: () => { localStorage.setItem("zmd-settings-initial-tab", "general"); invoke("open_settings_window"); } },
     { id: "settings-theme", label: t("app.command.labels.themeSettings"), category: t("app.command.categories.settings"), aliases: t("app.command.aliases.themeSettings").split(", "), action: () => { localStorage.setItem("zmd-settings-initial-tab", "theme"); invoke("open_settings_window"); } },
     { id: "settings-shortcuts", label: t("app.command.labels.shortcutSettings"), category: t("app.command.categories.settings"), aliases: t("app.command.aliases.shortcutSettings").split(", "), action: () => { localStorage.setItem("zmd-settings-initial-tab", "shortcuts"); invoke("open_settings_window"); } },
@@ -3153,11 +3258,11 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         />
 
         {/* 编辑区域 */}
-        <main className={`editor-container${(autoHideTopbar || (!sidebarOpen && autoHideTopbarOnCollapse)) ? ' sidebar-collapsed' : ''}`}>
+        <main className={`editor-container${!sidebarOpen ? " sidebar-is-closed" : ""}${(autoHideTopbar || (!sidebarOpen && autoHideTopbarOnCollapse)) ? " sidebar-collapsed" : ""}`}>
           <div className="editor-topbar-trigger" />
           {/* 顶部透明栏 */}
-          <div className="editor-topbar">
-            <div className="editor-topbar-left">
+          <div className="editor-topbar" data-tauri-drag-region="deep">
+            <div className="editor-topbar-left" data-tauri-drag-region="false">
               <button className="sidebar-toggle-btn" onClick={handleSidebarToggle} title={sidebarOpen ? t("app.toolbar.collapseSidebar") : t("app.toolbar.expandSidebar")}>
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
                   {sidebarOpen ? (
@@ -3201,7 +3306,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
               {displayedTitle}
               <span className={`traffic-light traffic-light--${displayedFileName ? displayedSaveStatus : "idle"}`} />
             </span>
-            <div className="window-controls">
+            <div className="window-controls" data-tauri-drag-region="false">
               {pinnedItems.mindmap && (
                 <button className="window-control-btn" title={t("app.toolbar.mindmap")} onClick={() => {
                   localStorage.setItem("zmd-mindmap-mode", "document");
@@ -3276,7 +3381,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </svg>
                 </button>
               )}
-              <div className="editor-topbar-more-wrapper" ref={moreMenuRef}>
+              <div className="editor-topbar-more-wrapper" ref={moreMenuRef} data-tauri-drag-region="false">
                 <button className="window-control-btn" title={t("app.toolbar.more")} onClick={() => setMoreMenuOpen((v) => !v)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="5" cy="12" r="2" />
@@ -3561,18 +3666,18 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </div>
                 )}
               </div>
-              <div className="window-controls-divider" />
-              <button className="window-control-btn" onClick={handleMinimize} title={t("app.toolbar.minimize")}>
+              <div className="window-controls-divider window-controls-native" />
+              <button className="window-control-btn window-controls-native" onClick={handleMinimize} title={t("app.toolbar.minimize")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
                   <line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" strokeWidth="1.2" />
                 </svg>
               </button>
-              <button className="window-control-btn" onClick={handleToggleMaximize} title={t("app.toolbar.maximize")}>
+              <button className="window-control-btn window-controls-native" onClick={handleToggleMaximize} title={t("app.toolbar.maximize")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
                   <rect x="1" y="1" width="8" height="8" rx="0.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
                 </svg>
               </button>
-              <button className="window-control-btn window-control-close" onClick={handleClose} title={t("app.toolbar.close")}>
+              <button className="window-control-btn window-control-close window-controls-native" onClick={handleClose} title={t("app.toolbar.close")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
                   <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1.2" />
                   <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1.2" />
@@ -3634,13 +3739,13 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                 <div className="welcome-hint">
                   <div className="welcome-hint-item">
                     <span>{t("app.welcome.openFile")}</span>
-                    <kbd>Ctrl</kbd>
+                    <kbd>{formatShortcutKey("Ctrl")}</kbd>
                     <span>+</span>
                     <kbd>O</kbd>
                   </div>
                   <div className="welcome-hint-item">
                     <span>{t("app.welcome.commandPalette")}</span>
-                    <kbd>Ctrl</kbd>
+                    <kbd>{formatShortcutKey("Ctrl")}</kbd>
                     <span>+</span>
                     <kbd>P</kbd>
                   </div>
