@@ -14,6 +14,8 @@
 import type { Extension } from "@tiptap/core";
 import type { Editor } from "@tiptap/core";
 import { VimMode, getVimMode } from "vim-prose/tiptap";
+import { getVimStateFromEditorState } from "vim-prose";
+import { TextSelection } from "@tiptap/pm/state";
 import type { VimMode as AppVimMode } from "../types";
 
 /**
@@ -35,6 +37,45 @@ export function mapVimMode(mode: string): AppVimMode {
  */
 export function createTiptapVimExtensions(enabled: boolean): Extension[] {
   return enabled ? [VimMode] : [];
+}
+
+/**
+ * 让 vim-prose 立刻从 visual 状态回到 normal 状态，并折叠选区到 head（等价按 ESC）。
+ * 用于 Leader / m 前缀动作执行完毕后自动退出 visual 选择，
+ * 保证每格式化一次都回到 normal，对齐真实 Vim 的体验。
+ */
+export function exitTiptapVisualMode(editor: Editor): void {
+  try {
+    const state = (editor.state as unknown) as import("prosemirror-state").EditorState;
+    const view = (editor.view as unknown) as import("prosemirror-view").EditorView | undefined;
+    if (!view || !state) return;
+    const vimState = getVimStateFromEditorState(state) as any;
+    if (!vimState) return;
+    if (vimState.mode !== "visual" && vimState.mode !== "visual-line") return;
+    const pos = vimState.visualHead ?? selectionHead(state);
+    vimState.mode = "normal";
+    vimState.visualAnchor = null;
+    vimState.visualHead = null;
+    vimState.searchHighlightsVisible = false;
+    try {
+      // clearPendingState 未对外导出，兜底处理常见 pending 字段
+      vimState.operatorPending = null;
+      vimState.count = "";
+      vimState.gPending = false;
+    } catch {}
+    const tr = state.tr.setSelection(TextSelection.create(state.doc, pos));
+    view.dispatch(tr);
+  } catch {
+    // ignore
+  }
+}
+
+function selectionHead(state: import("prosemirror-state").EditorState): number {
+  try {
+    return (state.selection as unknown as { $head?: { pos: number } })?.$head?.pos ?? state.selection.from ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 /**

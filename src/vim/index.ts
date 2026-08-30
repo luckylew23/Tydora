@@ -10,7 +10,7 @@
 export { VimProvider, useVim } from "./VimProvider";
 export { createVimExtension } from "./codemirror/vimExtension";
 export type { VimAdapterOptions } from "./codemirror/vimExtension";
-export { createTiptapVimExtensions, syncVimMode, mapVimMode } from "./tiptap/tiptapVimExtension";
+export { createTiptapVimExtensions, syncVimMode, mapVimMode, exitTiptapVisualMode } from "./tiptap/tiptapVimExtension";
 export { FileTreeVim } from "./filetree/FileTreeVim";
 
 // Leader 菜单（编辑器集成用）
@@ -19,10 +19,11 @@ export type { UseLeaderOptions, UseLeaderReturn } from "./leader/useLeader";
 export { LeaderMenu } from "./leader/LeaderMenu";
 export { executeCodeMirrorAction } from "./codemirror/markdownActions";
 
-// 前缀键配置（g/z/m）
+// 前缀键配置（g/z/m/t）
 export { prefixGConfig } from "./config/prefixG";
 export { prefixZConfig } from "./config/prefixZ";
 export { prefixMConfig } from "./config/prefixM";
+export { prefixTConfig } from "./config/prefixT";
 
 // 窗口导航（Ctrl+w h/j/k/l）
 export { useWindowNavigation } from "./navigation/useWindowNavigation";

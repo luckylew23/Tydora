@@ -16,7 +16,7 @@ const TerminalView = lazy(() => import("./Terminal/TerminalView").then(m => ({ d
 import { killTerminal, unregisterTerminal } from "./Terminal/terminalApi";
 import { startTerminalSettingsSync } from "./Terminal/terminal-settings";
 import Sidebar, { VaultInfo } from "./Sidebar";
-import { FileTreeVim, useWindowNavigation } from "./vim";
+import { FileTreeVim, useWindowNavigation, useVim } from "./vim";
 // 用 Vim HOC 包裹 Sidebar：enabled=false 时透传，零影响
 const VimSidebar = FileTreeVim(Sidebar);
 import { FilePreview } from "./components";
@@ -319,6 +319,36 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
 
   const { theme } = useTheme();
   const { t } = useTranslation();
+  // Vim 上下文：用于在全局快捷键（Ctrl+E / Ctrl+H / Ctrl+F / Ctrl+W 等）中判断是否需要让渡给 vim 模态
+  const { enabled: vimEnabled, mode: vimMode } = useVim();
+  // useRef 存 vim 状态，给 window 级 keydown listener 读取（避免频繁重新注册 listener）
+  const vimStateRef = useRef({ enabled: false, mode: "normal" as "normal" | "insert" | "visual" });
+  vimStateRef.current.enabled = vimEnabled;
+  vimStateRef.current.mode = vimMode;
+  /**
+   * 在 Vim 开启且当前 vim 模态不是 insert 时，若焦点在编辑器（ProseMirror/CodeMirror）内
+   * 或在 vim 管理的富文本节点内，让快捷键让渡给 vim 扩展。
+   * 返回 true 表示当前 handler 应该直接退出，不要处理快捷键。
+   */
+  const vimShouldTakeOver = useCallback((e: KeyboardEvent): boolean => {
+    if (!vimStateRef.current.enabled) return false;
+    if (vimStateRef.current.mode === "insert") return false;
+    const target = e.target as HTMLElement | null;
+    if (!target) return false;
+    // 输入框：不接管（vim 不在这些地方运行）
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return false;
+    // 编辑器（ProseMirror cm-editor / CodeMirror .cm-editor / vim-prose 标记 / TipTap .tiptap-editor）
+    if (
+      target.closest(".cm-editor") ||
+      target.closest('[data-pm-focus="true"]') ||
+      target.closest(".ProseMirror") ||
+      target.closest(".tiptap-editor") ||
+      target.closest("[data-vim-mode]")
+    ) {
+      return true;
+    }
+    return false;
+  }, []);
   const [saveStatus, setSaveStatus] = useState<"idle" | "modified" | "saved">("idle");
   const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => loadEditorSettings());
   // ── N 窗格共享缓冲 + 树形嵌套布局 ──
@@ -1292,6 +1322,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // Ctrl+O 快速打开文件
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 冲突：Ctrl+O=光标回到跳转列表上一个位置
+      if (vimShouldTakeOver(e) && (e.ctrlKey || e.metaKey) && e.key === "o") return;
       if ((e.ctrlKey || e.metaKey) && e.key === "o") {
         e.preventDefault();
         if (activeVaultIndex >= 0) {
@@ -1302,11 +1334,13 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeVaultIndex]);
+  }, [activeVaultIndex, vimShouldTakeOver]);
 
   // Ctrl+P 命令面板
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 冲突：Ctrl+P=向上一行（等同 k，cm-vim 映射）/ 打印键位兼容，normal 态让渡
+      if (vimShouldTakeOver(e) && (e.ctrlKey || e.metaKey) && e.key === "p") return;
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
         e.preventDefault();
         setQuickOpenOpen(false);
@@ -1315,7 +1349,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [vimShouldTakeOver]);
 
   // 读取图谱设置
   const getGraphSettings = useCallback(() => {
@@ -1330,6 +1364,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // Ctrl+G 知识图谱
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 冲突：Ctrl+G=显示文件信息
+      if (vimShouldTakeOver(e) && (e.ctrlKey || e.metaKey) && e.key === "g") return;
       if ((e.ctrlKey || e.metaKey) && e.key === "g") {
         e.preventDefault();
         if (getGraphSettings().openInNewWindow) {
@@ -1341,7 +1377,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [getGraphSettings]);
+  }, [vimShouldTakeOver]);
 
   // ── Vault callbacks ──
 
@@ -2344,6 +2380,11 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 关闭窗口 / 查找 / 替换快捷键（配置见 src/config/shortcuts.json 的 app）
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 语义冲突：Ctrl+W=删除前一个 word（insert）/ 操作符前缀（normal 窗格操作）
+      // Ctrl+F=整页向下；Ctrl+H=退格（insert）/ 光标左（normal）
+      if (vimShouldTakeOver(e) && matchShortcut(e, shortcutsConfig.app["close-window"])) return;
+      if (vimShouldTakeOver(e) && matchShortcut(e, shortcutsConfig.app["find"])) return;
+      if (vimShouldTakeOver(e) && matchShortcut(e, shortcutsConfig.app["replace"])) return;
       if (matchShortcut(e, shortcutsConfig.app["close-window"])) {
         e.preventDefault();
         const win = getCurrentWindow();
@@ -2371,7 +2412,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleClose, closePane]);
+  }, [handleClose, closePane, vimShouldTakeOver]);
 
   const toggleTypewriterMode = useCallback(() => {
     setTypewriterMode((prev: boolean) => !prev);
@@ -2440,6 +2481,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       } catch {}
       const key = shortcutKeys.join("+").toLowerCase();
       const eventKey = `${e.ctrlKey || e.metaKey ? "ctrl+" : ""}${e.altKey ? "alt+" : ""}${e.shiftKey ? "shift+" : ""}${e.key.toLowerCase()}`;
+      // Vim 冲突：Ctrl+E=向下滚动一行（vim normal）
+      if (eventKey === key && vimShouldTakeOver(e)) return;
       if (eventKey === key) {
         e.preventDefault();
         editorHandleRef.current?.executeCommand("inline-code");
@@ -2447,7 +2490,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, []);
+  }, [vimShouldTakeOver]);
 
   // 打开思维导图快捷键（配置见 src/config/shortcuts.json 的 app.open-mindmap）
   useEffect(() => {

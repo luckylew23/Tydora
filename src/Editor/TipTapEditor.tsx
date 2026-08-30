@@ -3,6 +3,7 @@ import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { markInputRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Paragraph from "@tiptap/extension-paragraph";
+import { TextSelection } from "@tiptap/pm/state";
 import Placeholder from "@tiptap/extension-placeholder";
 import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
@@ -48,10 +49,13 @@ import { loadShortcuts, matchShortcut } from "./shortcuts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import CodeMirrorEditor, { type CodeMirrorEditorHandle } from "./CodeMirrorEditor";
-import { useVim, useLeader, LeaderMenu, createTiptapVimExtensions, syncVimMode } from "../vim";
+import { useVim, useLeader, LeaderMenu, createTiptapVimExtensions, syncVimMode, exitTiptapVisualMode } from "../vim";
 import { prefixMConfig } from "../vim/config/prefixM";
+import { getVimMode } from "vim-prose/tiptap";
+import type { VimMode } from "../vim/types";
 import { prefixGConfig } from "../vim/config/prefixG";
 import { prefixZConfig } from "../vim/config/prefixZ";
+import { prefixTConfig } from "../vim/config/prefixT";
 import { buildPositionMap, mdOffsetToPmPos, pmPosToMdOffset } from "./markdown-position-map";
 import { ContextMenu } from "./ContextMenu";
 import { LinkDialog } from "./LinkDialog";
@@ -113,6 +117,165 @@ interface TipTapEditorProps {
   currentFilePath?: string | null;
   activeVaultPath?: string | null;
   onWordCount?: (count: number) => void;
+}
+
+// ── Vim motions：vim-prose 未实现的补齐 ──────────────────────────────
+/** 将光标移动到下一个 word 末尾（e）。兼容富文本中的 paragraph/table 等结构。 */
+function moveWordEndForward(editor: Editor): void {
+  try {
+    const { state, view } = editor as unknown as { state: any; view: any };
+    if (!state || !view) return;
+    const doc = state.doc;
+    const selection = state.selection;
+    const head = selection.$head?.pos ?? selection.from;
+    const docSize = doc.nodeSize ?? doc.content?.size ?? 0;
+
+    let inWord = false;
+    let wordBoundary = -1;
+    for (let pos = head + 1; pos <= docSize; pos++) {
+      let ch = "";
+      try {
+        const $pos = doc.resolve(pos);
+        const parent = $pos.parent;
+        // 到达节点边界（段落末尾、单元格末尾等）也视作 word 末尾
+        if ($pos.parentOffset === 0 && pos > head + 1) {
+          // 进入新节点：若之前有字，前一个位置就是候选
+          if (inWord) {
+            wordBoundary = pos - 1;
+            break;
+          }
+          continue;
+        }
+        const idx = $pos.parentOffset - 1;
+        if (parent && parent.textContent && idx >= 0 && idx < parent.textContent.length) {
+          ch = parent.textContent[idx];
+        }
+      } catch {
+        ch = "";
+      }
+      const isWord = ch.length > 0 && /[\p{L}\p{N}_]/u.test(ch);
+      if (!inWord && isWord) {
+        inWord = true;
+      } else if (inWord && !isWord) {
+        wordBoundary = pos - 1;
+        break;
+      }
+    }
+    if (wordBoundary === -1 && inWord) {
+      wordBoundary = docSize - 1;
+    }
+    if (wordBoundary > head) {
+      const tr = state.tr.setSelection(TextSelection.create(doc, wordBoundary));
+      view.dispatch(tr);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Vim 半页 / 整页翻页 + 光标垂直居中（TipTap 版）。
+ * 策略：先滚动视口 → posAtCoords 取视口中点设置光标 → 最后微调 scrollTop 使光标精确在视口中点。
+ * factor > 0 向下翻，factor < 0 向上翻。半页 |factor|=0.5，整页 |factor|=1.0。
+ */
+function vimPageScrollCenterTipTap(
+  editor: Editor,
+  factor: number,
+  isFullPage: boolean,
+  containerRef: React.RefObject<HTMLDivElement | null>
+): void {
+  try {
+    const view = (editor as unknown as { view: any }).view;
+    const state = (editor as unknown as { state: any }).state;
+    if (!view || !state) return;
+    const doc = state.doc;
+
+    // 滚动容器：与打字机模式一致（.tiptap-editor）
+    const sc = containerRef.current?.querySelector('.tiptap-editor') as HTMLElement | null
+      ?? view.dom as HTMLElement | null;
+    if (!sc) return;
+    const scEl: HTMLElement = sc;
+    const viewportH = Math.max(1, scEl.clientHeight);
+    const scrollMax = Math.max(0, scEl.scrollHeight - viewportH);
+
+    // 行高估算（用于整页时留 2 行上下文，类 Vim Ctrl+F/B 行为）
+    let approxLH = 22;
+    try {
+      const curSel = state.selection;
+      const headPos = curSel?.$head?.pos ?? curSel?.from ?? 0;
+      const coords = view.coordsAtPos?.(headPos) as { top: number; bottom: number } | undefined | null;
+      if (coords && coords.bottom - coords.top > 6) approxLH = coords.bottom - coords.top;
+    } catch { /* ignore */ }
+
+    // 1) 计算滚动量并先滚视口
+    let deltaPx = factor * viewportH;
+    if (isFullPage) {
+      // Vim 整页会留 2 行 overlap，使翻页更连续
+      deltaPx = deltaPx > 0
+        ? Math.max(approxLH * 2, deltaPx - approxLH * 2)
+        : Math.min(-approxLH * 2, deltaPx + approxLH * 2);
+    } else {
+      // 半页：factor=±0.5 已经是半页高度
+    }
+    scEl.scrollTop = Math.min(scrollMax, Math.max(0, scEl.scrollTop + deltaPx));
+
+    // 2) 计算"视口中心"这个屏幕坐标对应的文档位置
+    const rect = scEl.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let targetPos: number | null = null;
+    try {
+      const hit = view.posAtCoords?.({ left: cx, top: cy }) as
+        | { pos: number; inside: number }
+        | null
+        | undefined;
+      if (hit && typeof hit.pos === "number") targetPos = hit.pos;
+    } catch {
+      targetPos = null;
+    }
+    if (targetPos == null) {
+      // fallback：相对原来位置移动若干字符（保守方案）
+      const curHead = state.selection?.$head?.pos ?? state.selection?.from ?? 0;
+      targetPos = Math.max(0, Math.min((doc?.nodeSize ?? curHead) - 1, curHead + Math.round(deltaPx)));
+    }
+    targetPos = Math.max(0, Math.min((doc?.nodeSize ?? targetPos) - 1, targetPos));
+
+    // 3) 设置选区（visual 模式保留原 anchor，只移动 head）
+    const curSel = state.selection;
+    const isVisual =
+      !!curSel &&
+      (curSel.$anchor?.pos !== curSel.$head?.pos || curSel.from !== curSel.to);
+    const anchorPos = isVisual ? (curSel.$anchor?.pos ?? curSel.from ?? targetPos) : targetPos;
+    let tr = state.tr;
+    if (anchorPos === targetPos) {
+      tr = tr.setSelection(TextSelection.create(doc, targetPos));
+    } else {
+      tr = tr.setSelection(TextSelection.create(doc, anchorPos, targetPos));
+    }
+    // 不 scrollIntoView：我们自己精确控制 scrollTop
+    view.dispatch(tr);
+
+    // 4) 微调：把光标所在行精确移到视口垂直中点（下一帧执行，确保选区已生效）
+    const finalPos = targetPos;
+    requestAnimationFrame(() => {
+      try {
+        const coords = view.coordsAtPos?.(finalPos) as
+          | { top: number; bottom: number }
+          | null
+          | undefined;
+        if (!coords) return;
+        const r2 = scEl.getBoundingClientRect();
+        const lineCenterInContent =
+          (coords.top + coords.bottom) / 2 - r2.top + scEl.scrollTop;
+        scEl.scrollTop = Math.min(
+          scrollMax,
+          Math.max(0, lineCenterInContent - scEl.clientHeight / 2)
+        );
+      } catch { /* ignore */ }
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
@@ -207,6 +370,8 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
 
     // Vim 配置（需在 useEditor 前读取，用于条件注入 vim-prose 扩展）
     const { enabled: vimEnabled, leaderKey: vimLeaderKey, menuTimeout: vimMenuTimeout, mode: vimMode, setMode: onVimModeChange } = useVim();
+    const vimModeRef = useRef<VimMode>(vimMode);
+    vimModeRef.current = vimMode;
 
     const editor = useEditor({
       extensions: [
@@ -966,6 +1131,43 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
               event.stopPropagation();
             }
 
+            // ── Vim 模态优先：normal/visual 模式下跳过 shortcuts 层
+            // vim-prose 在内部处理 Ctrl+d/u/f/b、hjkl、w/b 等大量按键；
+            // 若让 shortcuts 先处理会把 Ctrl+D（删除线）/Ctrl+U（代码块）等拦截掉。
+            if (vimEnabled && editor) {
+              const vmode = getVimMode(editor);
+              if (vmode !== "insert" && vmode !== "replace") {
+                // ── Ctrl+D/U/F/B：自实现半页/整页翻页 + 光标垂直居中 ──
+                // vim-prose 默认实现存在两个问题：
+                //   1) halfPageDown/Up 用硬编码 lines=15，非视口半高；
+                //   2) 只调用 scrollIntoView，不做 centerCursorVertically，光标不在视口中点。
+                // 这里主动拦截，替代 vim-prose 默认实现。
+                if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+                  const k = event.key.toLowerCase();
+                  if (k === "d" || k === "u" || k === "f" || k === "b") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const isFull = (k === "f" || k === "b");
+                    const factor =
+                      (k === "d" || k === "f") ? (isFull ? +1.0 : +0.5) : (isFull ? -1.0 : -0.5);
+                    vimPageScrollCenterTipTap(editor, factor, isFull, containerRef);
+                    return true;
+                  }
+                }
+
+                // vim-prose 未实现的缺失键：e / ge
+                if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+                  if (event.key === "e") {
+                    event.preventDefault();
+                    moveWordEndForward(editor);
+                    return true;
+                  }
+                }
+                // 其余 normal/visual 按键交给 vim-prose（ProseMirror plugin）处理
+                return false;
+              }
+            }
+
             // 自定义快捷键处理（在 ProseMirror keymap 之前执行）
             const target = event.target as HTMLElement;
             if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA") {
@@ -1463,37 +1665,90 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
     };
 
     const dispatchTipTapAction = useCallback((action: string) => {
+      const wasVisual = vimModeRef.current === "visual";
+      let handled = false;
       if (action.startsWith("editor.")) {
         const ed = vimEditorRef.current;
         if (!ed) return false;
         const actionId = action.slice("editor.".length);
         executeCommand(tipTapActionMap[actionId] ?? actionId, ed);
-        return true;
-      }
-      if (action.startsWith("app.")) {
+        handled = true;
+      } else if (action.startsWith("app.")) {
         window.dispatchEvent(new CustomEvent("vim-app-action", {
           detail: { action: action.slice("app.".length) }
         }));
-        return true;
+        handled = true;
+      } else if (action.startsWith("table.")) {
+        const ed = vimEditorRef.current;
+        if (!ed) return false;
+        const op = action.slice("table.".length);
+        try {
+          switch (op) {
+            // ── 对齐：单元格内用 setCellAttribute，段落内用 updateAttributes ──
+            case "align-left":
+            case "align-center":
+            case "align-right": {
+              const align = op === "align-left" ? "left"
+                         : op === "align-center" ? "center" : "right";
+              // 先试 table 单元格级（光标在单元格内时生效，setCellAttribute 返回 false 时 fallback 到段落）
+              let ok = false;
+              try {
+                ok = (ed.chain().focus() as any).setCellAttribute?.("textAlign", align)?.run?.() ?? false;
+              } catch { ok = false; }
+              if (!ok) {
+                ok = ed.chain().focus().updateAttributes("paragraph", { textAlign: align }).run();
+              }
+              handled = !!ok;
+              break;
+            }
+            // ── 插入行 / 列（Tiptap Table 官方 command，避免手工拼节点） ──
+            case "add-row-above":
+              handled = ed.chain().focus().addRowBefore().run();
+              break;
+            case "add-row-below":
+              handled = ed.chain().focus().addRowAfter().run();
+              break;
+            case "add-col-left":
+              handled = ed.chain().focus().addColumnBefore().run();
+              break;
+            case "add-col-right":
+              handled = ed.chain().focus().addColumnAfter().run();
+              break;
+            // ── 合并 / 拆分 ──
+            case "merge-cells":
+              handled = ed.chain().focus().mergeCells().run();
+              break;
+            case "split-cell":
+              handled = ed.chain().focus().splitCell().run();
+              break;
+          }
+        } catch {
+          handled = false;
+        }
       }
-      return false;
+      // Visual 态执行完任何动作后立刻回到 normal 态（对齐真实 Vim 的操作体验）
+      if (handled && wasVisual) {
+        const ed = vimEditorRef.current;
+        if (ed) exitTiptapVisualMode(ed);
+      }
+      return handled;
     }, []);
 
-    // Leader 菜单（Space 触发，normal 态激活，与 CodeMirror 源码模式统一）
+    // Leader 菜单（Space 触发，normal/visual 态激活，与 CodeMirror 源码模式统一）
     const leader = useLeader({
       enabled: vimEnabled,
       triggerKey: vimLeaderKey,
       timeout: vimMenuTimeout,
-      active: vimMode === "normal",
+      active: vimMode !== "insert",
       dispatchAction: dispatchTipTapAction,
     });
 
-    // m 前缀键：normal 态按 m 弹出 Markdown 格式化菜单（mb=加粗, mi=斜体…）
+    // m 前缀键：normal/visual 态按 m 弹出 Markdown 格式化菜单（mb=加粗, mi=斜体…）
     const prefixM = useLeader({
       enabled: vimEnabled,
       triggerKey: "m",
       timeout: vimMenuTimeout,
-      active: vimMode === "normal" && !leader.open,
+      active: vimMode !== "insert" && !leader.open,
       dispatchAction: dispatchTipTapAction,
       initialItems: prefixMConfig.items,
     });
@@ -1503,7 +1758,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       enabled: vimEnabled,
       triggerKey: "g",
       timeout: vimMenuTimeout,
-      active: vimMode === "normal" && !leader.open && !prefixM.open,
+      active: vimMode !== "insert" && !leader.open && !prefixM.open,
       dispatchAction: dispatchTipTapAction,
       initialItems: prefixGConfig.items,
       passive: true,
@@ -1514,11 +1769,25 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       enabled: vimEnabled,
       triggerKey: "z",
       timeout: vimMenuTimeout,
-      active: vimMode === "normal" && !leader.open && !prefixM.open && !prefixG.open,
+      active: vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open,
       dispatchAction: dispatchTipTapAction,
       initialItems: prefixZConfig.items,
       passive: true,
     });
+
+    // t 前缀键：主动模式，表格操作（对齐/插入行列/合并拆分）。dispatchAction 处理 table.* 动作。
+    // 优先级排在 g/z 后面（normal/visual 态下 Space/m/g/z 都未开启时，按 t 激活）。
+    const prefixT = useLeader({
+      enabled: vimEnabled,
+      triggerKey: "t",
+      timeout: vimMenuTimeout,
+      active: vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open && !prefixZ.open,
+      dispatchAction: dispatchTipTapAction,
+      initialItems: prefixTConfig.items,
+    });
+    // 显式引用：确保 useLeader 返回值被 TS 认定为 "已读"，避免 unused-var。
+    // hook 本身通过内部 keydown listener 生效，不需要显式调用其方法。
+    void leader.open; void prefixM.open; void prefixG.open; void prefixZ.open; void prefixT.open;
 
     // 暴露 API
     useImperativeHandle(ref, () => ({
