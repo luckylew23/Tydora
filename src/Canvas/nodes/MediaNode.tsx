@@ -40,7 +40,7 @@ function MediaNode({ data, selected }: NodeProps) {
 
     // Resolve the path
     let resolvedPath = filePath;
-    if (!filePath.match(/^[A-Z]:\\/i) && !filePath.startsWith('/')) {
+     if (!filePath.match(/^[A-Z]:\\/i)) {
       const vaultPath = getVaultPath();
       if (vaultPath) {
         resolvedPath = resolveFilePath(vaultPath, filePath);

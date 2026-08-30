@@ -31,6 +31,7 @@ import { Markdown } from "tiptap-markdown";
 import { defaultMarkdownSerializer } from "prosemirror-markdown";
 import { common, createLowlight } from "lowlight";
 import { Frontmatter } from "./extensions/frontmatter";
+import { StripStyle } from "./extensions/strip-style";
 import { Callout } from "./extensions/callout";
 import { Mermaid } from "./extensions/mermaid";
 import { WikiLink } from "./extensions/wiki-link";
@@ -689,6 +690,12 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
                 const basePath = currentFilePathRef.current
                   ? dirName(currentFilePathRef.current)
                   : activeVaultPathRef.current;
+            if (src.startsWith("/")) {
+           // 仓库根绝对路径：/assets/image.png → vaultPath/assets/image.png
+               if (activeVaultPathRef.current) {
+                resolvedPath = resolveRelativePath(activeVaultPathRef.current, src.slice(1));
+               }
+            } else if (node.attrs["data-wiki-embed"]) {
                 if (node.attrs["data-wiki-embed"]) {
                   // Obsidian 嵌入图片：优先按文件名在 vault 中查找，失败则回退相对路径解析
                   const found = LinkIndexService.findImageByBaseName(src);
@@ -1091,6 +1098,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
           transformPastedText: true,
           transformCopiedText: true,
         }),
+        StripStyle,
         ...(editorSettings?.frontmatter !== false ? [Frontmatter] : []),
         ...(editorSettings?.callout !== false ? [Callout] : []),
         ...(editorSettings?.mermaid !== false ? [Mermaid] : []),

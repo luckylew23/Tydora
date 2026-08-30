@@ -231,12 +231,15 @@ export function getCanvasColor(color: CanvasColor | undefined): string | undefin
 
 // Resolve file path relative to vault path
 export function resolveFilePath(basePath: string, relativePath: string): string {
-  // If already absolute path, return as-is
-  if (relativePath.match(/^[A-Z]:\\/i) || relativePath.startsWith('/')) {
+  // If already absolute Windows path, return as-is
+  if (relativePath.match(/^[A-Z]:\\/i)) {
     return relativePath;
   }
-
-  // Normalize separators
+// Vault-root-relative path: /assets/image.png → basePath/assets/image.png
+  if (relativePath.startsWith('/')) {
+relativePath = relativePath.slice(1);
+  }
+    // Normalize separators
   const base = basePath.replace(/\\/g, '/');
   const rel = relativePath.replace(/\\/g, '/');
 

@@ -250,17 +250,7 @@ export async function saveImageToLocal(
 
     await writeFile(fullPath, uint8);
 
-    let markdownRef: string;
-    if (currentFilePath) {
-      const currentDir = dirName(currentFilePath);
-      const rel = relativePath(currentDir, fullPath);
-      markdownRef = rel.replace(/\\/g, "/");
-      if (!markdownRef.startsWith("./") && !markdownRef.startsWith("../")) {
-        markdownRef = "./" + markdownRef;
-      }
-    } else {
-      markdownRef = `./assets/${availableName}`;
-    }
+const markdownRef = `/assets/${availableName}`;
 
     return { savedPath: fullPath, markdownRef };
   }
@@ -287,17 +277,7 @@ async function saveToFixedDirectory(
 
   await writeFile(fullPath, uint8);
 
-  let markdownRef: string;
-  if (currentFilePath) {
-    const currentDir = dirName(currentFilePath);
-    const rel = relativePath(currentDir, fullPath);
-    markdownRef = rel.replace(/\\/g, "/");
-    if (!markdownRef.startsWith("./") && !markdownRef.startsWith("../")) {
-      markdownRef = "./" + markdownRef;
-    }
-  } else {
-    markdownRef = fullPath.replace(/\\/g, "/");
-  }
+   const markdownRef = `/assets/${availableName}`;
 
   return { savedPath: fullPath, markdownRef };
 }
