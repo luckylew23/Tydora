@@ -166,9 +166,10 @@ export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): Compon
 
             case "q":
               treeActiveRef.current = false;
-              (document.querySelector(
-                ".ProseMirror, .codemirror-editor, .editor-container"
-              ) as HTMLElement | null)?.focus?.();
+              // 通过 App 的窗格系统聚焦激活编辑器（兼容多窗格，避免 raw DOM focus 找错窗格）
+              window.dispatchEvent(new CustomEvent("vim-app-action", {
+                detail: { action: "focus-editor" },
+              }));
               break;
 
             default:

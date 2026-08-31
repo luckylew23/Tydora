@@ -165,6 +165,8 @@ interface TipTapEditorProps {
   currentFilePath?: string | null;
   activeVaultPath?: string | null;
   onWordCount?: (count: number) => void;
+  /** 该编辑器是否为当前激活窗格（多窗格时只有激活窗格的 Leader 菜单才生效） */
+  active?: boolean;
 }
 
 // ── Vim motions：vim-prose 未实现的补齐 ──────────────────────────────
@@ -327,7 +329,7 @@ function vimPageScrollCenterTipTap(
 }
 
 const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
-  ({ value, onChange, mode, typewriterMode, previewMaxWidth, lineHeight, paragraphSpacing, codeLineHeight, irLineNumbers, editorSettings, imageSettings, currentFilePath, activeVaultPath, onWordCount }, ref) => {
+  ({ value, onChange, mode, typewriterMode, previewMaxWidth, lineHeight, paragraphSpacing, codeLineHeight, irLineNumbers, editorSettings, imageSettings, currentFilePath, activeVaultPath, onWordCount, active = true }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const onChangeRef = useRef(onChange);
     const onWordCountRef = useRef(onWordCount);
@@ -1908,11 +1910,12 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
     }, []);
 
     // Leader 菜单（Space 触发，normal/visual 态激活，与 CodeMirror 源码模式统一）
+    // 多窗格时只有激活窗格（active=true）的 Leader 才生效，避免重复触发动作
     const leader = useLeader({
       enabled: vimEnabled,
       triggerKey: vimLeaderKey,
       timeout: vimMenuTimeout,
-      active: vimMode !== "insert",
+      active: active && vimMode !== "insert",
       dispatchAction: dispatchTipTapAction,
     });
 
@@ -1921,7 +1924,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       enabled: vimEnabled,
       triggerKey: "m",
       timeout: vimMenuTimeout,
-      active: vimMode !== "insert" && !leader.open,
+      active: active && vimMode !== "insert" && !leader.open,
       dispatchAction: dispatchTipTapAction,
       initialItems: prefixMConfig.items,
     });
@@ -1931,7 +1934,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       enabled: vimEnabled,
       triggerKey: "g",
       timeout: vimMenuTimeout,
-      active: vimMode !== "insert" && !leader.open && !prefixM.open,
+      active: active && vimMode !== "insert" && !leader.open && !prefixM.open,
       dispatchAction: dispatchTipTapAction,
       initialItems: prefixGConfig.items,
       passive: true,
@@ -1942,7 +1945,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       enabled: vimEnabled,
       triggerKey: "z",
       timeout: vimMenuTimeout,
-      active: vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open,
+      active: active && vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open,
       dispatchAction: dispatchTipTapAction,
       initialItems: prefixZConfig.items,
       passive: true,
@@ -1954,7 +1957,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       enabled: vimEnabled,
       triggerKey: "t",
       timeout: vimMenuTimeout,
-      active: vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open && !prefixZ.open,
+      active: active && vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open && !prefixZ.open,
       dispatchAction: dispatchTipTapAction,
       initialItems: prefixTConfig.items,
     });

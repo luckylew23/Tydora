@@ -53,4 +53,6 @@ export interface EditorProps {
   currentFilePath?: string | null;
   activeVaultPath?: string | null;
   onWordCount?: (count: number) => void;
+  /** 该编辑器是否为当前激活窗格（多窗格时只有激活窗格的 Leader 菜单才生效，避免重复触发） */
+  active?: boolean;
 }

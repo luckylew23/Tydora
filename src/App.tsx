@@ -17,6 +17,8 @@ import { killTerminal, unregisterTerminal } from "./Terminal/terminalApi";
 import { startTerminalSettingsSync } from "./Terminal/terminal-settings";
 import Sidebar, { VaultInfo } from "./Sidebar";
 import { FileTreeVim, useWindowNavigation, useVim } from "./vim";
+import { collectPaneIds, findAdjacentPane } from "./vim/panes";
+import type { SplitNode, PaneLeaf, SplitGroup } from "./vim/panes";
 // 用 Vim HOC 包裹 Sidebar：enabled=false 时透传，零影响
 const VimSidebar = FileTreeVim(Sidebar);
 import { FilePreview } from "./components";
@@ -168,19 +170,7 @@ interface Pane {
   terminalId?: string;
   mode: EditorMode;
 }
-interface PaneLeaf {
-  type: "leaf";
-  paneId: string;
-  flex: number;
-}
-interface SplitGroup {
-  type: "group";
-  groupId: string;
-  dir: "lr" | "tb";
-  flex: number;           // 该组作为父组 child 时的 flex 占比
-  children: SplitNode[];
-}
-type SplitNode = PaneLeaf | SplitGroup;
+// SplitNode / PaneLeaf / SplitGroup 类型已提取到 src/vim/panes/types.ts
 
 // 生成唯一 id（窗格 / 缓冲 / 分屏组）
 const bid = (): string => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `buf-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -236,16 +226,7 @@ function getImmediateParentGroupDir(root: SplitNode, paneId: string): "none" | "
   if (!r || r.path.length === 0) return "none";
   return r.path[r.path.length - 1].group.dir;
 }
-// 收集整棵树中所有 paneId（用于删除后孤儿缓冲清理）。
-function collectPaneIds(root: SplitNode): string[] {
-  const out: string[] = [];
-  const walk = (n: SplitNode) => {
-    if (n.type === "leaf") out.push(n.paneId);
-    else n.children.forEach(walk);
-  };
-  walk(root);
-  return out;
-}
+// collectPaneIds 已提取到 src/vim/panes/PaneNavigator.ts
 // 删除叶子节点并"压缩"只剩 1 个孩子的空组（把唯一孩子上提）。返回 {root, removed, adjacentPaneId}
 // adjacentPaneId 用于激活窗格切换：删除后让相邻的窗格获得焦点。
 function removePaneAndCollapse(root: SplitNode, paneId: string): { root: SplitNode; removed: boolean; adjacentPaneId: string | null } {
@@ -2304,6 +2285,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
             currentFilePath={buf.fileName}
             activeVaultPath={activeVaultIndex >= 0 ? vaults[activeVaultIndex]?.path : null}
             onWordCount={(c) => { if (pane.id === activePaneIdRef.current) setWordCount(c); }}
+            active={pane.id === activePaneId}
           />
         </Suspense>
       </EditorErrorBoundary>
@@ -2672,23 +2654,20 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // ── Vim 窗格导航 ──────────────────────────────────────────────────
   // 焦点切换：在扁平 pane 列表中按方向移动
   const focusPane = useCallback((dir: "left" | "down" | "up" | "right") => {
-    const ids = collectPaneIds(splitLayoutRef.current);
-    const idx = ids.indexOf(activePaneIdRef.current);
-    // ── 诊断日志：定位 focusPane 是否执行（确认后删除）──
-    console.log("[focusPane]", dir, { ids, idx, activeId: activePaneIdRef.current });
-    // 已在最左 pane 时按左 → 焦点跳侧栏文件树（zzvim 行为：跨越边界进入侧栏）
-    if (dir === "left" && idx <= 0) {
+    // tmux 风格方向查找：在布局树里按方向找最近相邻窗格
+    const targetId = findAdjacentPane(splitLayoutRef.current, activePaneIdRef.current, dir);
+    // ── 诊断：确认 focusPane 是否执行（确认后删除）──
+    console.log("[focusPane]", dir, { targetId, activeId: activePaneIdRef.current });
+    // 左方向已到边界 → 焦点跨界到侧栏文件树（zzvim 行为）
+    if (!targetId && dir === "left") {
       window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { tab: "files" } }));
       return;
     }
-    if (idx < 0 || ids.length <= 1) return;
-    // left/up → 前一个，right/down → 后一个
-    const delta = dir === "left" || dir === "up" ? -1 : 1;
-    const next = (idx + delta + ids.length) % ids.length;
-    setActivePaneId(ids[next]);
-    editorHandleRef.current = paneHandlesRef.current[ids[next]] ?? null;
+    if (!targetId) return;
+    setActivePaneId(targetId);
+    editorHandleRef.current = paneHandlesRef.current[targetId] ?? null;
     // 真正把键盘焦点移到目标 pane 的编辑器（等 React 渲染完 handle 已注册到 paneHandlesRef）
-    setTimeout(() => paneHandlesRef.current[ids[next]]?.focus(), 60);
+    setTimeout(() => paneHandlesRef.current[targetId]?.focus(), 60);
   }, []);
 
   // 移动当前窗格到父组的边缘
@@ -2724,7 +2703,19 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const vimAppHandlersRef = useRef<Record<string, () => void>>({});
   vimAppHandlersRef.current = {
     "save": handleSave,
-    "toggle-sidebar": handleSidebarToggle,
+    "toggle-sidebar": () => {
+      // Leader+E：打开文件树时切换到 files tab 并聚焦；关闭时仅收起
+      if (!sidebarOpen) {
+        setSidebarOpen(true);
+        window.dispatchEvent(new CustomEvent("vim-sidebar-tab", { detail: { tab: "files" } }));
+        // 等 React 渲染完侧栏内容后再聚焦文件树
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { tab: "files" } }));
+        }, 80);
+      } else {
+        handleSidebarToggle();
+      }
+    },
     "toggle-mode": cycleMode,
     "command-palette": () => setCommandPaletteOpen(true),
     "quick-open": () => { if (activeVaultIndex >= 0) setQuickOpenOpen(true); },
@@ -2747,6 +2738,17 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     "split-horizontal": () => { if (fileName && isCurrentFileMarkdown) handleSplit("lr"); else if (isActiveTerminal) handleSplit("lr"); },
     "split-vertical": () => { if (fileName && isCurrentFileMarkdown) handleSplit("tb"); else if (isActiveTerminal) handleSplit("tb"); },
     "close-pane": () => closePane(activePaneIdRef.current),
+    "focus-editor": () => {
+      // 从文件树跳回编辑器：聚焦当前激活窗格的编辑器
+      const targetId = activePaneIdRef.current;
+      const h = paneHandlesRef.current[targetId];
+      if (h) {
+        h.focus();
+        editorHandleRef.current = h;
+      } else {
+        codeMirrorRef.current?.focus();
+      }
+    },
     "focus-left": () => focusPane("left"),
     "focus-down": () => focusPane("down"),
     "focus-up": () => focusPane("up"),
