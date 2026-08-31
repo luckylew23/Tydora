@@ -1021,6 +1021,7 @@ function TreeNodeComp({
   node,
   depth,
   activePath,
+  pendingActivePath,
   onSelect,
   onRefresh,
   onReload,
@@ -1043,6 +1044,7 @@ function TreeNodeComp({
   node: TreeNode;
   depth: number;
   activePath: string | null;
+  pendingActivePath: string | null;
   onSelect: (path: string) => void;
   onRefresh: () => void;
   onReload: (expandPath?: string) => void;
@@ -1264,6 +1266,7 @@ function TreeNodeComp({
   }, []);
 
   const isActive = activePath === node.path;
+  const isPending = pendingActivePath === node.path;
   const isSelected = selectedPaths.has(node.path);
   const indent = depth * 22;
   const isDragOver = node.isDirectory && dragOverPath === node.path;
@@ -1272,7 +1275,7 @@ function TreeNodeComp({
     <div className="tree-branch">
       <div
         ref={nodeRef}
-        className={`tree-node${isActive ? " active" : ""}${isSelected ? " selected" : ""}${isDragOver ? " drag-over" : ""}`}
+        className={`tree-node${isActive ? " active" : ""}${isPending ? " pending-active" : ""}${isSelected ? " selected" : ""}${isDragOver ? " drag-over" : ""}`}
         style={{ paddingLeft: `${8 + indent}px` }}
         onClick={handleToggle}
         onContextMenu={handleContextMenu}
@@ -1322,6 +1325,7 @@ function TreeNodeComp({
               node={child}
               depth={depth + 1}
               activePath={activePath}
+              pendingActivePath={pendingActivePath}
               onSelect={onSelect}
               onRefresh={onRefresh}
               onReload={onReload}
@@ -1578,6 +1582,7 @@ function FileTree({
     setRootNodes([...rootNodesRef.current]);
     handleRefresh();
   }, [vaultPath, collectExpanded, handleRefresh]);
+
 
   const handleFinishEdit = useCallback(async (path: string, newName: string, isDirectory: boolean) => {
     setEditingPath(null);
@@ -1952,6 +1957,272 @@ function FileTree({
     saveExpandedPaths(vaultPath, current);
   }, [vaultPath]);
 
+  // ── Vim 键盘光标（pendingActivePath）：j/k 上下不打开文件，l/Enter 才打开 ──
+  const [pendingActivePath, setPendingActivePath] = useState<string | null>(null);
+  const pendingActivePathRef = useRef<string | null>(null);
+  pendingActivePathRef.current = pendingActivePath;
+
+  // 先序遍历，只把「当前可见」的项放入列表（目录未 expanded 时子项不进入）
+  const flattenVisible = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    const out: TreeNode[] = [];
+    const walk = (list: TreeNode[]) => {
+      for (const n of list) {
+        out.push(n);
+        if (n.isDirectory && n.expanded && n.children) walk(n.children);
+      }
+    };
+    walk(nodes);
+    return out;
+  }, []);
+
+  const findNodeByPath = useCallback((nodes: TreeNode[], path: string): TreeNode | null => {
+    const stack = [...nodes];
+    while (stack.length) {
+      const cur = stack.shift()!;
+      if (cur.path === path) return cur;
+      if (cur.children) for (const c of cur.children) stack.unshift(c);
+    }
+    return null;
+  }, []);
+
+  const targetDirPathFor = useCallback((path: string | null): string => {
+    if (!path) return rootPath;
+    const n = findNodeByPath(rootNodesRef.current, path);
+    if (n?.isDirectory) return path;
+    return parentPath(path) || rootPath;
+  }, [findNodeByPath, rootPath]);
+
+  // expand dir 并等待 loadDirectory 完成 + setState 完成
+  const toggleDirExpanded = useCallback(async (path: string): Promise<boolean> => {
+    const n = findNodeByPath(rootNodesRef.current, path);
+    if (!n || !n.isDirectory) return false;
+    if (n.children === null) n.children = await loadDirectory(n.path);
+    n.expanded = !n.expanded;
+    handleToggleExpand(n.path, n.expanded);
+    setRootNodes([...rootNodesRef.current]);
+    handleRefresh();
+    return n.expanded;
+  }, [findNodeByPath, handleToggleExpand, handleRefresh]);
+
+  const collapseDescendants = useCallback((path: string) => {
+    const n = findNodeByPath(rootNodesRef.current, path);
+    if (!n || !n.isDirectory) return;
+    const walk = (nodes: TreeNode[]) => {
+      for (const c of nodes) {
+        if (c.isDirectory) {
+          c.expanded = false;
+          if (c.children) walk(c.children);
+        }
+      }
+    };
+    if (n.children) walk(n.children);
+    handleToggleExpand(path, n.expanded); // path 本身保持原样
+    saveExpandedPaths(vaultPath, collectExpanded(rootNodesRef.current));
+    setRootNodes([...rootNodesRef.current]);
+    handleRefresh();
+  }, [findNodeByPath, collectExpanded, handleToggleExpand, vaultPath, handleRefresh]);
+
+  // 打开文件或目录（l/Enter/o 的语义）
+  const doConfirmOpen = useCallback(async (path: string | null) => {
+    if (!path) return;
+    const n = findNodeByPath(rootNodesRef.current, path);
+    if (!n) return;
+    if (n.isDirectory) {
+      await toggleDirExpanded(path);
+    } else {
+      onSelect(path);
+    }
+  }, [findNodeByPath, toggleDirExpanded, onSelect]);
+
+  // 初始化 pendingActivePath：优先用 activePath（真实已打开文件），否则用第一个节点
+  useEffect(() => {
+    setPendingActivePath((prev) => {
+      if (prev) return prev;
+      if (activePath) {
+        const exists = findNodeByPath(rootNodesRef.current, activePath);
+        if (exists) return activePath;
+      }
+      const list = flattenVisible(rootNodesRef.current);
+      return list[0]?.path ?? null;
+    });
+  }, [activePath, rootNodes, findNodeByPath, flattenVisible]);
+
+  // 监听 Vim 侧栏动作事件
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ action?: string; path?: string; delta?: number }>;
+      const action = ce.detail?.action;
+      if (!action) return;
+      const setP = (p: string | null) => { setPendingActivePath(p); pendingActivePathRef.current = p; };
+      const jump = (delta: number) => {
+        const list = flattenVisible(rootNodesRef.current);
+        if (list.length === 0) return;
+        const cur = pendingActivePathRef.current;
+        let idx = cur ? list.findIndex((n) => n.path === cur) : -1;
+        if (idx < 0) idx = list[0].path === cur ? 0 : -1;
+        idx = idx < 0 ? (delta > 0 ? -1 : 0) : idx;
+        const next = Math.max(0, Math.min(list.length - 1, idx + delta));
+        setP(list[next].path);
+        pendingRevealPathRef.current = list[next].path;
+        window.requestAnimationFrame(() => {
+          const el = treeRef.current?.querySelector(`[data-path="${CSS.escape(list[next].path)}"]`);
+          el?.scrollIntoView({ block: "nearest", behavior: "auto" });
+        });
+      };
+      switch (action) {
+        case "highlight-next":
+          jump(+1);
+          break;
+        case "highlight-prev":
+          jump(-1);
+          break;
+        case "highlight-first": {
+          const list = flattenVisible(rootNodesRef.current);
+          if (list.length) { setP(list[0].path); pendingRevealPathRef.current = list[0].path; }
+          break;
+        }
+        case "highlight-last": {
+          const list = flattenVisible(rootNodesRef.current);
+          if (list.length) { setP(list[list.length - 1].path); pendingRevealPathRef.current = list[list.length - 1].path; }
+          break;
+        }
+        case "highlight-path": {
+          const p = ce.detail.path ?? null;
+          if (p) setP(p);
+          break;
+        }
+        case "highlight-parent": {
+          const p = pendingActivePathRef.current;
+          if (!p) return;
+          if (p === rootPath) return;
+          const par = parentPath(p);
+          setP(par);
+          pendingRevealPathRef.current = par;
+          break;
+        }
+        case "h-toggle": {
+          // h 语义：如果当前是已展开目录 → 折叠；否则 → 高亮父目录
+          const p = pendingActivePathRef.current;
+          if (!p) return;
+          const n = findNodeByPath(rootNodesRef.current, p);
+          if (n?.isDirectory && n.expanded) {
+            toggleDirExpanded(p); // 折叠
+          } else {
+            if (p === rootPath) return;
+            const par = parentPath(p);
+            setP(par);
+            pendingRevealPathRef.current = par;
+          }
+          break;
+        }
+        case "toggle-dir-only": {
+          const p = pendingActivePathRef.current;
+          if (p) toggleDirExpanded(p);
+          break;
+        }
+        case "collapse-all": {
+          handleCollapseAll();
+          break;
+        }
+        case "expand-all": {
+          handleExpandAll();
+          break;
+        }
+        case "collapse-branch": {
+          const p = pendingActivePathRef.current;
+          if (p) collapseDescendants(p);
+          break;
+        }
+        case "confirm-open": {
+          doConfirmOpen(pendingActivePathRef.current);
+          break;
+        }
+        case "new-file": {
+          const target = targetDirPathFor(pendingActivePathRef.current);
+          (async () => {
+            try {
+              const filePath = await uniqueFilePath(target, "untitled", ".md");
+              await writeTextFile(filePath, "");
+              await handleReload(target);
+              setP(filePath);
+              handleStartEdit(filePath);
+            } catch (err) { console.error(i18n.t("sidebar.error.newFileFailed"), err); }
+          })();
+          break;
+        }
+        case "new-folder": {
+          const target = targetDirPathFor(pendingActivePathRef.current);
+          (async () => {
+            try {
+              const dirPath = await uniqueDirPath(target, "新建文件夹");
+              await mkdir(dirPath);
+              await handleReload(target);
+              setP(dirPath);
+              handleStartEdit(dirPath);
+            } catch (err) { console.error(i18n.t("sidebar.error.newFolderFailed"), err); }
+          })();
+          break;
+        }
+        case "rename": {
+          const p = pendingActivePathRef.current;
+          if (p) handleStartEdit(p);
+          break;
+        }
+        case "delete": {
+          const p = pendingActivePathRef.current;
+          if (!p) return;
+          (async () => {
+            try {
+              const paths = selectedPaths.size > 0 && selectedPaths.has(p)
+                ? Array.from(selectedPaths)
+                : [p];
+              for (const q of paths) { await remove(q, { recursive: true }); }
+              handleMultiSelect([], 'replace');
+              await handleReload();
+            } catch (err) { console.error(i18n.t("sidebar.error.deleteFailed"), err); }
+          })();
+          break;
+        }
+        case "duplicate": {
+          const p = pendingActivePathRef.current;
+          if (!p) return;
+          (async () => {
+            try {
+              await invoke("duplicate_file", { path: p });
+              showToast(i18n.t("sidebar.toast.duplicated"));
+              await handleReload();
+            } catch (err) {
+              console.error(i18n.t("sidebar.error.duplicateFailed"), err);
+              showToast(i18n.t("sidebar.error.duplicateFailed"));
+            }
+          })();
+          break;
+        }
+        case "move-to": {
+          const p = pendingActivePathRef.current;
+          if (!p) return;
+          const n = findNodeByPath(rootNodesRef.current, p);
+          if (n) handleMoveTo(p, n.isDirectory);
+          break;
+        }
+        case "copy-path": {
+          const p = pendingActivePathRef.current;
+          if (!p) return;
+          navigator.clipboard?.writeText(p)
+            .then(() => showToast(i18n.t("sidebar.toast.pathCopied")))
+            .catch(() => { prompt(`${i18n.t("sidebar.file.filePath")}`, p); });
+          break;
+        }
+      }
+    };
+    window.addEventListener("vim-sidebar-action", handler);
+    return () => window.removeEventListener("vim-sidebar-action", handler);
+  }, [
+    flattenVisible, findNodeByPath, targetDirPathFor, toggleDirExpanded, collapseDescendants,
+    doConfirmOpen, handleCollapseAll, handleExpandAll, rootPath, handleReload, handleStartEdit,
+    handleMoveTo, handleMultiSelect, selectedPaths,
+  ]);
+
   const handleScroll = useCallback(() => {
     const el = treeRef.current;
     if (!el || !onScrollToTop) return;
@@ -2157,6 +2428,7 @@ function FileTree({
             node={node}
             depth={0}
             activePath={activePath}
+            pendingActivePath={pendingActivePath}
             onSelect={onSelect}
             onRefresh={handleRefresh}
             onReload={handleReload}
@@ -2600,6 +2872,43 @@ export default function Sidebar({
   // Trigger re-render on language change
   useTranslation();
 
+  // ── 焦点管理：侧栏打开 / 切 Tab / 点击时，焦点自动落到当前 Tab 的可交互区域 ──
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const filesPanelRef = useRef<HTMLDivElement>(null);
+  const outlinePanelRef = useRef<HTMLDivElement>(null);
+  const bookmarksPanelRef = useRef<HTMLDivElement>(null);
+
+  const focusTabContent = useCallback((tab: "files" | "search" | "outline" | "bookmarks") => {
+    switch (tab) {
+      case "files": {
+        filesPanelRef.current?.focus();
+        // 兜底：若 FileTree 内部已有 pending-active 元素，滚到视野
+        const el = filesPanelRef.current?.querySelector<HTMLElement>(
+          ".tree-node.pending-active, .tree-node.active",
+        );
+        if (el) {
+          window.requestAnimationFrame(() =>
+            el.scrollIntoView({ block: "nearest", behavior: "auto" }),
+          );
+        }
+        break;
+      }
+      case "search": {
+        const input =
+          sidebarRef.current?.querySelector<HTMLInputElement>(".sidebar-search-input");
+        input?.focus();
+        input?.select();
+        break;
+      }
+      case "outline":
+        outlinePanelRef.current?.focus();
+        break;
+      case "bookmarks":
+        bookmarksPanelRef.current?.focus();
+        break;
+    }
+  }, []);
+
   const handleSelectFile = useCallback(
     (path: string, line?: number, query?: string) => { onSelectFile(path, line, query); },
     [onSelectFile],
@@ -2611,6 +2920,14 @@ export default function Sidebar({
       setSearchQuery("");
     }
   }, []);
+
+  // 侧栏从折叠→展开、或 activeTab 切换时，把焦点自动移到当前 Tab 的主内容区
+  useEffect(() => {
+    if (collapsed) return;
+    // 延迟一帧，确保切 Tab 后的 DOM 已渲染（如搜索 input、FileTree 挂载完成）
+    const id = window.requestAnimationFrame(() => focusTabContent(activeTab));
+    return () => window.cancelAnimationFrame(id);
+  }, [collapsed, activeTab, focusTabContent]);
 
   // Ctrl+Shift+F to toggle search tab
   useEffect(() => {
@@ -2639,6 +2956,17 @@ export default function Sidebar({
     window.addEventListener("vim-sidebar-tab", handler);
     return () => window.removeEventListener("vim-sidebar-tab", handler);
   }, [switchTab]);
+
+  // Ctrl+h 到最左边界 / focusPane 跨界 → 把焦点交给侧栏当前 tab 的主内容区
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab?: "files" | "search" | "outline" | "bookmarks" }>).detail ?? {};
+      if (collapsed) return;
+      focusTabContent(detail.tab ?? activeTab);
+    };
+    window.addEventListener("vim-sidebar-focus", handler);
+    return () => window.removeEventListener("vim-sidebar-focus", handler);
+  }, [collapsed, activeTab, focusTabContent]);
 
   // 外部触发切换到大纲（如双击 .md 文件时按设置自动展开大纲）
   const prevOutlineTriggerRef = useRef<number | undefined>(outlineTrigger);
@@ -2681,8 +3009,25 @@ export default function Sidebar({
   bootEnd("sidebar_component_render");
   return (
     <div
+      ref={sidebarRef}
+      tabIndex={-1}
       className={`sidebar${collapsed ? " collapsed" : ""}${isResizing ? " resizing" : ""}`}
       style={{ width: collapsed ? 0 : width }}
+      onMouseDownCapture={(e) => {
+        // 用户点击侧栏时：若点击的是「非可聚焦」元素，把焦点交给当前 Tab 的主内容容器。
+        // 若用户点了 tab 按钮、搜索 input、tree-node 内 input（重命名态）等原生可聚焦元素，
+        // 它们会在 mouseup 后自动拿到焦点，这里不动，避免抢占。
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        const focusable = target.closest<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+        );
+        if (focusable) return;
+        // 当前焦点已经在侧栏内部则不重复触发
+        const cur = document.activeElement as HTMLElement | null;
+        if (cur && sidebarRef.current?.contains(cur)) return;
+        focusTabContent(activeTab);
+      }}
     >
       <div className="sidebar-topbar" data-tauri-drag-region="deep" />
 
@@ -2730,24 +3075,26 @@ export default function Sidebar({
       </div>
 
       {activeTab === "files" && (
-        activeVault ? (
-          <FileTree
-            key={activeVault.path}
-            rootPath={activeVault.path}
-            activePath={currentFilePath}
-            onSelect={handleSelectFile}
-            refreshKey={refreshKey}
-            onNewWindow={onNewWindow}
-            onOpenInNewPanel={onOpenInNewPanel}
-            canOpenInNewPanel={canOpenInNewPanel}
-            onBookmark={onBookmark}
-          />
-        ) : (
-          <div className="sidebar-tree">
-            <div className="tree-empty">{i18n.t("sidebar.empty.noVault")}</div>
-            <div className="tree-empty-hint">{i18n.t("sidebar.empty.openVaultHint")}</div>
-          </div>
-        )
+        <div ref={filesPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0 }}>
+          {activeVault ? (
+            <FileTree
+              key={activeVault.path}
+              rootPath={activeVault.path}
+              activePath={currentFilePath}
+              onSelect={handleSelectFile}
+              refreshKey={refreshKey}
+              onNewWindow={onNewWindow}
+              onOpenInNewPanel={onOpenInNewPanel}
+              canOpenInNewPanel={canOpenInNewPanel}
+              onBookmark={onBookmark}
+            />
+          ) : (
+            <div className="sidebar-tree">
+              <div className="tree-empty">{i18n.t("sidebar.empty.noVault")}</div>
+              <div className="tree-empty-hint">{i18n.t("sidebar.empty.openVaultHint")}</div>
+            </div>
+          )}
+        </div>
       )}
 
       {activeTab === "search" && (
@@ -2772,16 +3119,20 @@ export default function Sidebar({
       )}
 
       {activeTab === "outline" && (
-        <Outline content={content} onSelectHeading={onSelectHeading} />
+        <div ref={outlinePanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0 }}>
+          <Outline content={content} onSelectHeading={onSelectHeading} />
+        </div>
       )}
 
       {activeTab === "bookmarks" && (
-        <BookmarksPanel
-          vaultPath={activeVault?.path ?? null}
-          vaults={vaults}
-          onSelectFile={handleSelectFile}
-          onNewWindow={onNewWindow}
-        />
+        <div ref={bookmarksPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0 }}>
+          <BookmarksPanel
+            vaultPath={activeVault?.path ?? null}
+            vaults={vaults}
+            onSelectFile={handleSelectFile}
+            onNewWindow={onNewWindow}
+          />
+        </div>
       )}
 
       <VaultSwitcher

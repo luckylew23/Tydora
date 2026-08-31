@@ -94,6 +94,7 @@
       "canvas": "白板",
       "terminal": "终端",
       "publish": "发布",
+      "vim": "Vim 模式",
       "groupAbout": "关于",
       "about": "关于"
     },
@@ -534,6 +535,36 @@
       "visitRepo": "访问 GitHub 仓库",
       "feedback": "问题反馈",
       "updateFailed": "更新失败:"
+    },
+    "vim": {
+      "enable": "启用 Vim 模式",
+      "enableDesc": "LazyVim 风格键盘操作。默认关闭，关闭时不影响任何现有功能。源码模式与所见即所得模式均支持完整 Vim 三态（normal/insert/visual）。",
+      "leaderKey": "Leader 键",
+      "leaderKeyDesc": "normal 模式下按此键弹出 Leader 菜单。默认空格，源码模式与所见即所得模式统一。",
+      "menuTimeout": "菜单超时自动关闭",
+      "menuTimeoutDesc": "Leader 菜单无操作自动关闭的毫秒数。",
+      "conflictKeys": "冲突快捷键让渡",
+      "conflictKeysDesc": "以下快捷键在 Vim normal/visual 模式下与 App 快捷键冲突。开启表示让渡给 Vim（App 快捷键不触发），关闭表示 App 快捷键照常生效。",
+      "conflict": {
+        "ctrl+d": "删除线",
+        "ctrl+d.vimAction": "Vim：向下翻半页",
+        "ctrl+u": "代码块",
+        "ctrl+u.vimAction": "Vim：向上翻半页",
+        "ctrl+e": "行内代码",
+        "ctrl+e.vimAction": "Vim：向下滚动一行",
+        "ctrl+h": "替换",
+        "ctrl+h.vimAction": "Vim：光标左移 / 退格",
+        "ctrl+f": "查找",
+        "ctrl+f.vimAction": "Vim：向下翻整页",
+        "ctrl+w": "关闭窗格",
+        "ctrl+w.vimAction": "Vim：窗口操作前缀",
+        "ctrl+o": "快速打开",
+        "ctrl+o.vimAction": "Vim：跳转列表后退",
+        "ctrl+p": "命令面板",
+        "ctrl+p.vimAction": "Vim：向上移动一行",
+        "ctrl+g": "知识图谱",
+        "ctrl+g.vimAction": "Vim：显示文件信息"
+      }
     }
   },
   "app": {
@@ -580,6 +611,11 @@
     },
     "fontSizeToast": "字号",
     "wordCount": "{{count}} 字",
+    "vimMode": {
+      "normal": "NORMAL 模式",
+      "insert": "INSERT 模式",
+      "visual": "VISUAL 模式"
+    },
     "welcome": {
       "openFile": "打开文件",
       "commandPalette": "命令面板"

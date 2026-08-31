@@ -10,7 +10,7 @@
 export { VimProvider, useVim } from "./VimProvider";
 export { createVimExtension } from "./codemirror/vimExtension";
 export type { VimAdapterOptions } from "./codemirror/vimExtension";
-export { createTiptapVimExtensions, syncVimMode, mapVimMode, exitTiptapVisualMode } from "./tiptap/tiptapVimExtension";
+export { createTiptapVimExtensions, syncVimMode, mapVimMode, exitTiptapVisualMode, enterTiptapInsertMode } from "./tiptap/tiptapVimExtension";
 export { FileTreeVim } from "./filetree/FileTreeVim";
 
 // Leader 菜单（编辑器集成用）
@@ -24,6 +24,10 @@ export { prefixGConfig } from "./config/prefixG";
 export { prefixZConfig } from "./config/prefixZ";
 export { prefixMConfig } from "./config/prefixM";
 export { prefixTConfig } from "./config/prefixT";
+
+// 冲突快捷键清单（设置面板 + App.tsx 让渡判断共用）
+export { CONFLICT_KEYS } from "./config/conflictKeys";
+export type { ConflictKeyDef } from "./config/conflictKeys";
 
 // 窗口导航（Ctrl+w h/j/k/l）
 export { useWindowNavigation } from "./navigation/useWindowNavigation";

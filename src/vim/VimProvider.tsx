@@ -11,6 +11,8 @@ import type { VimConfig, VimMode, VimState } from "./types";
 import { DEFAULT_VIM_CONFIG, VIM_CONFIG_KEY, loadVimConfig, saveVimConfig } from "./config/configLoader";
 
 interface VimContextValue extends VimState {
+  /** 冲突快捷键让渡配置 */
+  conflictKeys: Record<string, boolean>;
   /** 更新配置并持久化（设置面板调用） */
   updateConfig: (patch: Partial<VimConfig>) => void;
   /** CodeMirror vim 扩展回调：模式切换时同步到 Context */
@@ -56,6 +58,7 @@ export function VimProvider({ children }: { children: ReactNode }) {
       mode,
       leaderKey: config.leaderKey,
       menuTimeout: config.menuTimeout,
+      conflictKeys: config.conflictKeys ?? {},
       updateConfig,
       setMode,
     }),
@@ -74,6 +77,7 @@ export function useVim(): VimContextValue {
     mode: "insert",
     leaderKey: DEFAULT_VIM_CONFIG.leaderKey,
     menuTimeout: DEFAULT_VIM_CONFIG.menuTimeout,
+    conflictKeys: DEFAULT_VIM_CONFIG.conflictKeys ?? {},
     updateConfig: () => {},
     setMode: () => {},
   };

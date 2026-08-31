@@ -21,6 +21,8 @@ export interface VimConfig {
   enabled: boolean;
   leaderKey: string;
   menuTimeout: number;
+  /** 冲突快捷键让渡配置：key="ctrl+d", value=true(让渡给 Vim)/false(App 快捷键生效) */
+  conflictKeys?: Record<string, boolean>;
 }
 
 /** Leader 菜单项 */

@@ -51,7 +51,7 @@ import { loadShortcuts, matchShortcut } from "./shortcuts";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import CodeMirrorEditor, { type CodeMirrorEditorHandle } from "./CodeMirrorEditor";
-import { useVim, useLeader, LeaderMenu, createTiptapVimExtensions, syncVimMode, exitTiptapVisualMode } from "../vim";
+import { useVim, useLeader, LeaderMenu, createTiptapVimExtensions, syncVimMode, exitTiptapVisualMode, enterTiptapInsertMode } from "../vim";
 import { prefixMConfig } from "../vim/config/prefixM";
 import { getVimMode } from "vim-prose/tiptap";
 import type { VimMode } from "../vim/types";
@@ -417,9 +417,14 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
     };
 
     // Vim 配置（需在 useEditor 前读取，用于条件注入 vim-prose 扩展）
-    const { enabled: vimEnabled, leaderKey: vimLeaderKey, menuTimeout: vimMenuTimeout, mode: vimMode, setMode: onVimModeChange } = useVim();
+    const { enabled: vimEnabled, leaderKey: vimLeaderKey, menuTimeout: vimMenuTimeout, mode: vimMode, setMode: onVimModeChange, conflictKeys: vimConflictKeys } = useVim();
     const vimModeRef = useRef<VimMode>(vimMode);
     vimModeRef.current = vimMode;
+    // 冲突键让渡配置 ref：给 handleDOMEvents 闭包读取
+    const vimConflictKeysRef = useRef<Record<string, boolean>>(vimConflictKeys ?? {});
+    vimConflictKeysRef.current = vimConflictKeys ?? {};
+    // jk 快速序列（insert → normal）追踪：记录上次 j 按下的时间戳
+    const vimJkRef = useRef<{ lastJAt: number }>({ lastJAt: 0 });
 
     const editor = useEditor({
       extensions: [
@@ -1222,28 +1227,107 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
             // ── Vim 模态优先：normal/visual 模式下跳过 shortcuts 层
             // vim-prose 在内部处理 Ctrl+d/u/f/b、hjkl、w/b 等大量按键；
             // 若让 shortcuts 先处理会把 Ctrl+D（删除线）/Ctrl+U（代码块）等拦截掉。
+            //
+            // 冲突键让渡：用户可在设置中关闭某个冲突键的让渡（conflictKeys[id]===false），
+            // 关闭后该键不翻页，直接 fall through 到下方 shortcuts 层执行 App 快捷键。
             if (vimEnabled && editor) {
               const vmode = getVimMode(editor);
-              if (vmode !== "insert" && vmode !== "replace") {
-                // ── Ctrl+D/U/F/B：自实现半页/整页翻页 + 光标垂直居中 ──
-                // vim-prose 默认实现存在两个问题：
-                //   1) halfPageDown/Up 用硬编码 lines=15，非视口半高；
-                //   2) 只调用 scrollIntoView，不做 centerCursorVertically，光标不在视口中点。
-                // 这里主动拦截，替代 vim-prose 默认实现。
-                if ((event.ctrlKey || event.metaKey) && !event.altKey) {
-                  const k = event.key.toLowerCase();
-                  if (k === "d" || k === "u" || k === "f" || k === "b") {
+
+              // ── Insert/Replace 态：Ctrl+[（等价 ESC）以及 jk 快速序列退出 insert ──
+              if (vmode === "insert" || vmode === "replace") {
+                // Ctrl+[ 等价 ESC：退出 insert/replace → normal
+                if (event.key === "[" && (event.ctrlKey || event.metaKey)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  exitTiptapVisualMode(editor); // 内部会设 mode=normal + 折叠选区（安全）
+                  return true;
+                }
+                // jk 快速序列：在 ~300ms 内按 j 再按 k → 回删 jk 两个字符 + 退出 insert
+                if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+                  if (event.key === "j") {
+                    vimJkRef.current.lastJAt = Date.now();
+                    // 不用 return true：让 j 字符正常输入文档
+                  } else if (event.key === "k") {
+                    const now = Date.now();
+                    if (vimJkRef.current.lastJAt > 0 && now - vimJkRef.current.lastJAt <= 320) {
+                      vimJkRef.current.lastJAt = 0;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      // 回退刚输入的 "j" + 未输入的 "k"，总共删 2 个字符
+                      try {
+                        editor
+                          .chain()
+                          .focus()
+                          .deleteRange({
+                            from: Math.max(0, editor.state.selection.anchor - 1),
+                            to: editor.state.selection.anchor,
+                          })
+                          .run();
+                      } catch { /* ignore */ }
+                      exitTiptapVisualMode(editor);
+                      return true;
+                    }
+                    // k 独立输入 → 不标记 j
+                    vimJkRef.current.lastJAt = 0;
+                  } else {
+                    // 其它字符打断 jk 序列
+                    vimJkRef.current.lastJAt = 0;
+                  }
+                }
+              } else {
+                // 默认跳过 shortcuts 层（交给 vim-prose）；非让渡的冲突键会改为 false
+                let skipShortcuts = true;
+
+                // ── 进入 insert 的键：i/a/I/A/o/O s/S 手动切 insert，并 preventDefault
+                // vim-prose 内部虽然能切 insert，但经常无法 preventDefault，导致字母
+                // 被写入文档（例如 normal 态按 i 文档中会多出一个 "i" 字符）。
+                // 因此我们在 handleDOMEvents 更早的阶段手动切换，return true 阻止 DOM 默认。
+                if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+                  const k = event.key;
+                  if (k === "i" || k === "a" || k === "I" || k === "A" ||
+                      k === "o" || k === "O" || k === "s" || k === "S") {
                     event.preventDefault();
                     event.stopPropagation();
-                    const isFull = (k === "f" || k === "b");
-                    const factor =
-                      (k === "d" || k === "f") ? (isFull ? +1.0 : +0.5) : (isFull ? -1.0 : -0.5);
-                    vimPageScrollCenterTipTap(editor, factor, isFull, containerRef);
+                    enterTiptapInsertMode(editor, k as "i"|"a"|"I"|"A"|"o"|"O"|"s"|"S");
+                    return true;
+                  }
+                  // x = delete char under cursor：vim-prose 有时也没拦住 x 字符写入
+                  if (k === "x") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    try {
+                      const { from, to } = editor.state.selection;
+                      if (from !== to) {
+                        editor.chain().focus().deleteRange({ from, to }).run();
+                      } else {
+                        editor.chain().focus().deleteRange({ from, to: Math.min(from + 1, editor.state.doc.content.size) }).run();
+                      }
+                    } catch { /* ignore */ }
                     return true;
                   }
                 }
 
-                // vim-prose 未实现的缺失键：e / ge
+                // ── Ctrl+D/U/F/B：自实现半页/整页翻页 + 光标垂直居中 ──
+                if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+                  const k = event.key.toLowerCase();
+                  if (k === "d" || k === "u" || k === "f" || k === "b") {
+                    const keyId = `ctrl+${k}`;
+                    const yielded = vimConflictKeysRef.current[keyId] !== false; // 默认 true
+                    if (yielded) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const isFull = (k === "f" || k === "b");
+                      const factor =
+                        (k === "d" || k === "f") ? (isFull ? +1.0 : +0.5) : (isFull ? -1.0 : -0.5);
+                      vimPageScrollCenterTipTap(editor, factor, isFull, containerRef);
+                      return true;
+                    }
+                    // 不让渡：放行到下方 shortcuts 层（Ctrl+D=删除线 / Ctrl+U=代码块 等）
+                    skipShortcuts = false;
+                  }
+                }
+
+                // vim-prose 未实现的缺失键：e / ge（始终由 vim 接管，非冲突键）
                 if (!event.ctrlKey && !event.metaKey && !event.altKey) {
                   if (event.key === "e") {
                     event.preventDefault();
@@ -1251,8 +1335,9 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
                     return true;
                   }
                 }
-                // 其余 normal/visual 按键交给 vim-prose（ProseMirror plugin）处理
-                return false;
+
+                // 非让渡的冲突键 → fall through 到下方 shortcuts 层
+                if (skipShortcuts) return false;
               }
             }
 
@@ -1745,7 +1830,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
     const vimEditorRef = useRef<Editor | null>(editor);
     vimEditorRef.current = editor;
 
-    // leader.json 的 editor.* ID 与 TipTap executeCommand 名称的映射差异
+    // leader.ts 的 editor.* ID 与 TipTap executeCommand 名称的映射差异
     const tipTapActionMap: Record<string, string> = {
       "code-block": "code",
       "unordered-list": "list",

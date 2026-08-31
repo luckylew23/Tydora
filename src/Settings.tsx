@@ -3131,11 +3131,10 @@ export default function Settings() {
         },
         {
           id: "vim", label: t("settings.tabs.vim", "Vim 模式"), icon: (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="6" width="20" height="12" rx="2" />
-              <path d="M6 10l2 4 2-4M14 10l2 4 2-4" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2 4h4.5L12 13l5.5-9H22L13.5 20H10.5L2 4z"/>
             </svg>
-          ), searchTerms: ["Vim", "LazyVim", "键盘", "Leader", "快捷键", "vim"]
+          ), searchTerms: ["Vim", "LazyVim", "键盘", "Leader", "快捷键", "vim", "keyboard"]
         },
       ]
     },

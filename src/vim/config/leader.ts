@@ -2,8 +2,7 @@
 // Leader 菜单配置（which-key 风格）。
 //
 // 说明：
-// - 由 leader.json 同步维护（TS 导出避免 esbuild optimizeDeps 在 JSON import 上失败）
-// - 修改 leader.json 后，请同步更新本文件
+// - 这是 Leader 菜单的唯一真实配置源（useLeader.ts 直接 import 本文件）。
 // - action 命名空间：editor.* / app.* / vim.*
 
 import type { LeaderItem } from "../types";

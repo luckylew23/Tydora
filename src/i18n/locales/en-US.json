@@ -94,6 +94,7 @@
       "canvas": "Canvas",
       "terminal": "Terminal",
       "publish": "Publish",
+      "vim": "Vim Mode",
       "groupAbout": "About",
       "about": "About"
     },
@@ -534,6 +535,36 @@
       "visitRepo": "Visit GitHub Repository",
       "feedback": "Feedback",
       "updateFailed": "Update failed:"
+    },
+    "vim": {
+      "enable": "Enable Vim Mode",
+      "enableDesc": "LazyVim-style keyboard operation. Disabled by default with zero impact on existing features. Both Source and WYSIWYG modes support full Vim tri-state (normal/insert/visual).",
+      "leaderKey": "Leader Key",
+      "leaderKeyDesc": "Press this key in normal mode to open the Leader menu. Defaults to Space, unified across Source and WYSIWYG modes.",
+      "menuTimeout": "Menu Auto-close Timeout",
+      "menuTimeoutDesc": "Milliseconds of inactivity before the Leader menu auto-closes.",
+      "conflictKeys": "Conflict Key Override",
+      "conflictKeysDesc": "The following shortcuts conflict between Vim normal/visual mode and App shortcuts. Toggle ON to yield to Vim (App shortcut suppressed), toggle OFF to let the App shortcut work as usual.",
+      "conflict": {
+        "ctrl+d": "Strikethrough",
+        "ctrl+d.vimAction": "Vim: Half page down",
+        "ctrl+u": "Code Block",
+        "ctrl+u.vimAction": "Vim: Half page up",
+        "ctrl+e": "Inline Code",
+        "ctrl+e.vimAction": "Vim: Scroll down one line",
+        "ctrl+h": "Replace",
+        "ctrl+h.vimAction": "Vim: Move cursor left / Backspace",
+        "ctrl+f": "Find",
+        "ctrl+f.vimAction": "Vim: Full page down",
+        "ctrl+w": "Close Pane",
+        "ctrl+w.vimAction": "Vim: Window prefix",
+        "ctrl+o": "Quick Open",
+        "ctrl+o.vimAction": "Vim: Jump list backward",
+        "ctrl+p": "Command Palette",
+        "ctrl+p.vimAction": "Vim: Move cursor up one line",
+        "ctrl+g": "Knowledge Graph",
+        "ctrl+g.vimAction": "Vim: Show file info"
+      }
     }
   },
   "app": {
@@ -580,6 +611,11 @@
     },
     "fontSizeToast": "Font size",
     "wordCount": "{{count}} words",
+    "vimMode": {
+      "normal": "NORMAL mode",
+      "insert": "INSERT mode",
+      "visual": "VISUAL mode"
+    },
     "welcome": {
       "openFile": "Open File",
       "commandPalette": "Command Palette"

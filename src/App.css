@@ -204,6 +204,55 @@
   right: 12px;
 }
 
+/* 左下角浮动控件：Vim 模式徽标 + 模式切换按钮；与右下角控件保持相同 z-index/边距 */
+.editor-bottom-left {
+  left: 12px;
+  z-index: 10;
+}
+
+/* ── Vim 模式徽标：N（NORMAL）/ I（INSERT）/ V（VISUAL） ── */
+.vim-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  line-height: 18px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-family: inherit;
+  border-radius: 3px;
+  color: #fff;
+  text-transform: uppercase;
+  user-select: none;
+  flex-shrink: 0;
+  /* 与模式按钮同高视觉基线对齐 */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* NORMAL：绿色（Neovim 标准） */
+.vim-mode-badge--normal {
+  background: #4caf50;
+}
+
+/* INSERT：蓝色 */
+.vim-mode-badge--insert {
+  background: #2196f3;
+}
+
+/* VISUAL：橙色 */
+.vim-mode-badge--visual {
+  background: #ff9800;
+}
+
+/* 暗色主题适配：颜色柔和一点点（保留明度足够对比） */
+@media (prefers-color-scheme: dark) {
+  .vim-mode-badge--normal { background: #43a047; }
+  .vim-mode-badge--insert { background: #1e88e5; }
+  .vim-mode-badge--visual { background: #fb8c00; }
+}
+
 /* 侧栏折叠时隐藏底部浮动控件 */
 .editor-container.sidebar-collapsed .floating-mode-toggle,
 .editor-container.sidebar-collapsed .editor-bottom-controls {

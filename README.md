@@ -80,8 +80,9 @@ npm run tauri build
 
 ## Tech Stack
 
+
 | Layer         | Technology                                                  |
-| ------------- | ----------------------------------------------------------- |
+| --------------- | ------------------------------------------------------------- |
 | Frontend      | React 19 + TypeScript + Vite 6                              |
 | Editor        | TipTap 3.x (WYSIWYG) + CodeMirror 6 (Source)                |
 | Backend       | Rust (Tauri v2)                                             |
@@ -92,10 +93,11 @@ npm run tauri build
 
 Issues and pull requests are welcome!
 
-## License
+## Contributors
 
-This project is licensed under the [Apache License 2.0](LICENSE).
-
+<a href="https://github.com/zuorn/Tydora/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=zuorn/Tydora" />
+</a>
 
 ## Star History
 
@@ -106,3 +108,7 @@ This project is licensed under the [Apache License 2.0](LICENSE).
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zuorn/Tydora&type=date&legend=top-left&sealed_token=UbjlpYMAKlj9YxE9TrI3oZEpbMArNY0oRBtXdZ4GlQe9lQG0bgKmhoGnECO6aR-BCg34sIpFHJLyux4trfCJQVTOG2DIOa2HKERx9cCUMNhsoboxUFNz8g" />
  </picture>
 </a>
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).

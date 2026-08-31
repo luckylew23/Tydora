@@ -172,6 +172,45 @@
   border: 0.5px solid rgba(var(--accent-rgb, 137, 180, 250), 0.12);
 }
 
+/* Vim 键盘光标（j/k 高亮，不会打开文件） */
+.tree-node.pending-active {
+  background: linear-gradient(135deg,
+      rgba(var(--accent-rgb, 137, 180, 250), 0.10) 0%,
+      rgba(255, 255, 255, 0.06) 100%);
+  color: var(--text-primary);
+  font-weight: 500;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.04),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+  border: 0.5px dashed rgba(var(--accent-rgb, 137, 180, 250), 0.3);
+  outline: none;
+}
+
+.tree-node.pending-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(var(--accent-rgb, 137, 180, 250), 0.35);
+  opacity: 0.65;
+}
+
+/* 同时存在 .active（真实打开）和 .pending-active（Vim 光标）时，以真实 active 为主，不叠加虚线条 */
+.tree-node.pending-active.active {
+  border: 0.5px solid rgba(var(--accent-rgb, 137, 180, 250), 0.2);
+}
+
+.tree-node.pending-active.active::before {
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(var(--accent-rgb, 137, 180, 250), 0.5);
+}
+
 @keyframes tree-active-bar {
   0% {
     height: 0;

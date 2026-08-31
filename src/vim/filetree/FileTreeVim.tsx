@@ -1,155 +1,187 @@
 // src/vim/filetree/FileTreeVim.tsx
-// 文件树 nvim-tree 风格快捷键 HOC。
+// 文件树 neo-tree 风格快捷键 HOC。
 //
-// 设计：
-// - 不修改原 FileTree 组件，通过全局 keydown 监听拦截
-// - 仅在 Vim enabled 且文件树被点击聚焦时生效
-// - 导航（j/k/h/l/Enter）走 DOM 模拟 click
-// - 文件操作（a/A/r/d/y）打开右键菜单后自动点击对应项
-//
-// 快捷键参考 nvim-tree:
-// j/k    下上移动
-// l/Enter 打开文件 / 展开目录
-// h       折叠目录 / 跳到父目录
-// a       新建文件
-// A       新建文件夹
-// r       重命名
-// d       删除
-// y       复制路径
-// q       退出文件树（焦点回到编辑器）
+// 架构：本文件只负责激活判定 + 键盘 → vim-sidebar-action CustomEvent 的翻译；
+// 真正的状态修改（光标跳跃、目录展开、文件新建/重命名/删除/复制等）全部在
+// Sidebar/FileTree 组件内部通过监听 vim-sidebar-action 完成，保证 j/k 高亮
+// 永远**不触发 onSelect**（只有 confirm-open / l/Enter/o 才真正打开文件）。
 
 import { useEffect, useRef, type ComponentType } from "react";
-import { useTranslation } from "react-i18next";
 import { useVim } from "../VimProvider";
+
+type Detail = { action: string; path?: string; delta?: number };
+function act(action: string, extra?: Partial<Detail>) {
+  window.dispatchEvent(new CustomEvent<Detail>("vim-sidebar-action", {
+    detail: { action, ...extra },
+  }));
+}
 
 export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): ComponentType<P> {
   return function VimFileTreeWrapper(props: P) {
     const { enabled } = useVim();
-    const { t } = useTranslation();
     const treeActiveRef = useRef(false);
-    // 用 ref 持有最新的 t 函数，避免 effect 依赖变化频繁重注册
-    const tRef = useRef(t);
-    tRef.current = t;
+    const gPendingRef = useRef(false);
 
     useEffect(() => {
       if (!enabled) return;
 
-      // 点击文件树区域时标记为 active，点击其他区域时取消
+      const activate = () => { treeActiveRef.current = true; };
+
       const handleClick = (e: MouseEvent) => {
         const tree = document.querySelector(".sidebar-tree");
-        treeActiveRef.current = !!tree && tree.contains(e.target as Node);
+        const sidebar = document.querySelector(".sidebar");
+        const target = e.target as Node;
+        if ((tree && tree.contains(target)) || (sidebar && sidebar.contains(target))) {
+          activate();
+          // 真实点击某个 tree-node → 把 Vim 光标对齐到该节点（之后 j/k 从这里起步）
+          const tn = (target as HTMLElement)?.closest?.<HTMLElement>(".tree-node[data-path]");
+          if (tn?.dataset.path) act("highlight-path", { path: tn.dataset.path });
+        } else {
+          treeActiveRef.current = false;
+        }
       };
 
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (!treeActiveRef.current) return;
-
-        // 重命名输入框中不拦截
-        const target = e.target as HTMLElement;
-        if (target.tagName === "INPUT" || target.isContentEditable) return;
-
-        // 右键菜单已打开时不拦截（让用户操作菜单）
-        if (document.querySelector(".context-menu")) return;
-
+      const handleFocus = (e: FocusEvent) => {
         const tree = document.querySelector(".sidebar-tree");
+        const sidebar = document.querySelector(".sidebar");
+        const el = e.target as Node | null;
+        if (!el) return;
+        if ((tree && tree.contains(el)) || (sidebar && sidebar.contains(el))) activate();
+      };
+
+      document.addEventListener("click", handleClick, true);
+      document.addEventListener("focusin", handleFocus, true);
+
+      const handleKeyDown = (e: KeyboardEvent) => {
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+        // 上下文菜单或弹窗已开时：不拦截
+        if (document.querySelector(".context-menu, .modal, [role='dialog']")) return;
+
+        const tree = document.querySelector<HTMLElement>(".sidebar-tree");
         if (!tree) return;
 
-        const allItems = Array.from(
-          tree.querySelectorAll<HTMLElement>(".tree-node[data-path]")
-        );
-        // 排除根容器自身（它也有 data-path）
-        const items = allItems.filter((el) => !el.classList.contains("sidebar-tree"));
-        if (items.length === 0) return;
+        const sidebarEl = document.querySelector(".sidebar") as HTMLElement | null;
+        const activated = treeActiveRef.current
+          || (sidebarEl && (sidebarEl.contains(document.activeElement) || sidebarEl === document.activeElement));
+        if (!activated) return;
 
-        const activeItem = items.find((el) => el.classList.contains("active"));
-        const currentIdx = activeItem ? items.indexOf(activeItem) : -1;
+        // 焦点仍在编辑器中：不拦截（即使侧栏刚被 click 激活，只要用户又点回编辑器就应该让编辑器 Vim 接手）
+        const editorHost =
+          document.querySelector(".ProseMirror") as HTMLElement | null
+          ?? document.querySelector(".codemirror-editor") as HTMLElement | null;
+        if (editorHost && editorHost.contains(document.activeElement)) return;
 
-        let handled = false;
+        const key = e.key;
+        const noMods = !e.ctrlKey && !e.altKey && !e.metaKey;
 
-        switch (e.key) {
-          case "j": {
-            handled = true;
-            const next = currentIdx < 0 ? 0 : Math.min(currentIdx + 1, items.length - 1);
-            items[next]?.click();
-            break;
-          }
-          case "k": {
-            handled = true;
-            const prev = currentIdx < 0 ? 0 : Math.max(currentIdx - 1, 0);
-            items[prev]?.click();
-            break;
-          }
-          case "l":
-          case "Enter": {
-            handled = true;
-            activeItem?.click();
-            break;
-          }
-          case "h": {
-            handled = true;
-            if (activeItem) {
-              const isDir = activeItem.dataset.isDir === "1";
-              const chevron = activeItem.querySelector(".tree-chevron");
-              const isExpanded = chevron?.classList.contains("expanded");
+        let handled = true;
+        if (noMods) {
+          switch (key) {
+            // 导航：只 highlight，不打开
+            case "j":
+            case "ArrowDown":
+              act("highlight-next");
+              break;
+            case "k":
+            case "ArrowUp":
+              act("highlight-prev");
+              break;
+            case "Home":
+              act("highlight-first");
+              break;
+            case "End":
+              act("highlight-last");
+              break;
+            case "H":
+              act("highlight-first");
+              break;
+            case "G":
+              act("highlight-last");
+              break;
+            case "g":
+              gPendingRef.current = true;
+              window.setTimeout(() => { gPendingRef.current = false; }, 450);
+              handled = false; // 单独的 g 不做 preventDefault，让浏览器默认过
+              break;
 
-              if (isDir && isExpanded) {
-                // 折叠当前目录
-                activeItem.click();
-              } else {
-                // 跳到父目录节点
-                const branch = activeItem.closest(".tree-branch");
-                const parentChildren = branch?.parentElement;
-                const parentBranch = parentChildren?.closest(".tree-branch");
-                const parentNode = parentBranch?.querySelector(
-                  ":scope > .tree-node"
-                ) as HTMLElement | null;
-                parentNode?.click();
-              }
-            }
-            break;
+            case "h":
+            case "Backspace":
+              // 已展开目录 → 折叠；文件 / 未展开目录 → 高亮父目录
+              act("h-toggle");
+              break;
+            case "p":
+              act("highlight-parent");
+              break;
+
+            // 目录结构
+            case "W":
+              act("collapse-all");
+              break;
+            case "E":
+              act("expand-all");
+              break;
+            case "C":
+              act("collapse-branch");
+              break;
+
+            // 真正打开 / 展开
+            case "l":
+            case "Enter":
+            case "o":
+              act("confirm-open");
+              break;
+
+            // 文件操作：直接走 Sidebar 内部同逻辑（避免依赖右键菜单 DOM 查找）
+            case "a":
+            case "%":
+              act("new-file");
+              break;
+            case "A":
+              act("new-folder");
+              break;
+            case "r":
+              act("rename");
+              break;
+            case "d":
+              act("delete");
+              break;
+            case "D":
+            case "c":
+              act("duplicate");
+              break;
+            case "x":
+              act("move-to");
+              break;
+            case "y":
+              act("copy-path");
+              break;
+
+            case "R":
+              // App 级 refresh：让 treeRefreshKey++ 重新 loadRoot
+              window.dispatchEvent(new CustomEvent("vim-sidebar-action", {
+                detail: { action: "refresh" },
+              }));
+              break;
+
+            case "q":
+              treeActiveRef.current = false;
+              (document.querySelector(
+                ".ProseMirror, .codemirror-editor, .editor-container"
+              ) as HTMLElement | null)?.focus?.();
+              break;
+
+            default:
+              handled = false;
+              break;
           }
-          case "a": {
-            handled = true;
-            const ctxTarget = activeItem || (tree as HTMLElement);
-            triggerContextAction(ctxTarget, tRef.current("sidebar.contextMenu.newFile"));
-            break;
-          }
-          case "A": {
-            handled = true;
-            const ctxTarget = activeItem || (tree as HTMLElement);
-            triggerContextAction(ctxTarget, tRef.current("sidebar.contextMenu.newFolder"));
-            break;
-          }
-          case "r": {
-            handled = true;
-            if (activeItem) {
-              triggerContextAction(activeItem, tRef.current("sidebar.contextMenu.rename"));
-            }
-            break;
-          }
-          case "d": {
-            handled = true;
-            if (activeItem) {
-              triggerContextAction(activeItem, tRef.current("sidebar.contextMenu.delete"));
-            }
-            break;
-          }
-          case "y": {
-            handled = true;
-            if (activeItem) {
-              const path = activeItem.getAttribute("data-path") || "";
-              navigator.clipboard?.writeText(path).catch(() => {});
-            }
-            break;
-          }
-          case "q": {
-            handled = true;
-            treeActiveRef.current = false;
-            const editor = document.querySelector(
-              ".editor-container, .codemirror-editor"
-            ) as HTMLElement | null;
-            editor?.focus();
-            break;
-          }
+        }
+
+        // gg → 首项（g-pending 窗口内再按一次 g）
+        if (!handled && noMods && key === "g" && gPendingRef.current) {
+          gPendingRef.current = false;
+          act("highlight-first");
+          handled = true;
         }
 
         if (handled) {
@@ -158,42 +190,14 @@ export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): Compon
         }
       };
 
-      document.addEventListener("click", handleClick, true);
       window.addEventListener("keydown", handleKeyDown, true);
       return () => {
         document.removeEventListener("click", handleClick, true);
+        document.removeEventListener("focusin", handleFocus, true);
         window.removeEventListener("keydown", handleKeyDown, true);
       };
     }, [enabled]);
 
     return <Wrapped {...props} />;
   };
-}
-
-/**
- * 在元素位置触发右键菜单，等 React 渲染后按标签文本点击对应菜单项。
- */
-function triggerContextAction(element: HTMLElement, label: string): void {
-  const rect = element.getBoundingClientRect();
-  const event = new MouseEvent("contextmenu", {
-    bubbles: true,
-    cancelable: true,
-    clientX: rect.left + 8,
-    clientY: rect.top + 8,
-  });
-  element.dispatchEvent(event);
-
-  // 等 React 渲染 context-menu 后查找并点击
-  requestAnimationFrame(() => {
-    const menu = document.querySelector(".context-menu");
-    if (!menu) return;
-    const menuItems = menu.querySelectorAll<HTMLElement>(".context-menu-item");
-    for (const item of menuItems) {
-      const labelEl = item.querySelector(".context-menu-label");
-      if (labelEl && labelEl.textContent === label) {
-        item.click();
-        return;
-      }
-    }
-  });
 }

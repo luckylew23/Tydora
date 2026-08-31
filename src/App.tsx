@@ -324,15 +324,19 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const { theme } = useTheme();
   const { t } = useTranslation();
   // Vim 上下文：用于在全局快捷键（Ctrl+E / Ctrl+H / Ctrl+F / Ctrl+W 等）中判断是否需要让渡给 vim 模态
-  const { enabled: vimEnabled, mode: vimMode } = useVim();
+  const { enabled: vimEnabled, mode: vimMode, conflictKeys: vimConflictKeys } = useVim();
   // useRef 存 vim 状态，给 window 级 keydown listener 读取（避免频繁重新注册 listener）
-  const vimStateRef = useRef({ enabled: false, mode: "normal" as "normal" | "insert" | "visual" });
+  const vimStateRef = useRef({ enabled: false, mode: "normal" as "normal" | "insert" | "visual", conflictKeys: {} as Record<string, boolean> });
   vimStateRef.current.enabled = vimEnabled;
   vimStateRef.current.mode = vimMode;
+  vimStateRef.current.conflictKeys = vimConflictKeys;
   /**
    * 在 Vim 开启且当前 vim 模态不是 insert 时，若焦点在编辑器（ProseMirror/CodeMirror）内
    * 或在 vim 管理的富文本节点内，让快捷键让渡给 vim 扩展。
    * 返回 true 表示当前 handler 应该直接退出，不要处理快捷键。
+   *
+   * 冲突快捷键例外：如果用户在设置中关闭了某个冲突键的让渡（conflictKeys[id] === false），
+   * 则该键不接管，App 快捷键照常生效。
    */
   const vimShouldTakeOver = useCallback((e: KeyboardEvent): boolean => {
     if (!vimStateRef.current.enabled) return false;
@@ -349,6 +353,13 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       target.closest(".tiptap-editor") ||
       target.closest("[data-vim-mode]")
     ) {
+      // 检查冲突键配置：如果用户关闭了该键的让渡，返回 false（App 快捷键生效）
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        const keyId = `ctrl+${e.key.toLowerCase()}`;
+        if (keyId in vimStateRef.current.conflictKeys && vimStateRef.current.conflictKeys[keyId] === false) {
+          return false;
+        }
+      }
       return true;
     }
     return false;
@@ -1481,6 +1492,15 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       setModified(false);
       setContent("");
       pushToHistory(path);
+      // 打开白板/预览后：焦点回到主编辑器区域（优先激活的 editor pane，兜底 codeMirrorRef）
+      setTimeout(() => {
+        const editorPane = panesRef.current.find((p) => p.kind === "editor");
+        if (editorPane) {
+          const h = paneHandlesRef.current[editorPane.id];
+          if (h) { h.focus(); editorHandleRef.current = h; return; }
+        }
+        codeMirrorRef.current?.focus();
+      }, 60);
       return;
     }
 
@@ -1490,6 +1510,15 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       setPreviewFilePath(path);
       setCanvasFilePath(null);
       pushToHistory(path);
+      // 非可编辑文件预览时：同上焦点回编辑器区域
+      setTimeout(() => {
+        const editorPane = panesRef.current.find((p) => p.kind === "editor");
+        if (editorPane) {
+          const h = paneHandlesRef.current[editorPane.id];
+          if (h) { h.focus(); editorHandleRef.current = h; return; }
+        }
+        codeMirrorRef.current?.focus();
+      }, 60);
       return;
     }
 
@@ -1709,6 +1738,18 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
           return { ...prev, [vaultPath]: updated };
         });
       }
+
+      // 文件打开完成后：延迟 focus 到目标编辑器窗格（等 React re-render 完，handle 已注册到 paneHandlesRef）
+      setTimeout(() => {
+        const h = paneHandlesRef.current[targetPaneId];
+        if (h) {
+          h.focus();
+          if (targetPaneId === activePaneIdRef.current) editorHandleRef.current = h;
+        } else {
+          // 兜底：单编辑器模式（没有 panes / renderPane），直接 codeMirrorRef
+          codeMirrorRef.current?.focus();
+        }
+      }, 60);
     } catch (e) {
       console.error(t("app.error.openFileFailed"), e);
     }
@@ -2633,12 +2674,21 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const focusPane = useCallback((dir: "left" | "down" | "up" | "right") => {
     const ids = collectPaneIds(splitLayoutRef.current);
     const idx = ids.indexOf(activePaneIdRef.current);
+    // ── 诊断日志：定位 focusPane 是否执行（确认后删除）──
+    console.log("[focusPane]", dir, { ids, idx, activeId: activePaneIdRef.current });
+    // 已在最左 pane 时按左 → 焦点跳侧栏文件树（zzvim 行为：跨越边界进入侧栏）
+    if (dir === "left" && idx <= 0) {
+      window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { tab: "files" } }));
+      return;
+    }
     if (idx < 0 || ids.length <= 1) return;
     // left/up → 前一个，right/down → 后一个
     const delta = dir === "left" || dir === "up" ? -1 : 1;
     const next = (idx + delta + ids.length) % ids.length;
     setActivePaneId(ids[next]);
     editorHandleRef.current = paneHandlesRef.current[ids[next]] ?? null;
+    // 真正把键盘焦点移到目标 pane 的编辑器（等 React 渲染完 handle 已注册到 paneHandlesRef）
+    setTimeout(() => paneHandlesRef.current[ids[next]]?.focus(), 60);
   }, []);
 
   // 移动当前窗格到父组的边缘
@@ -2715,6 +2765,28 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     window.addEventListener("vim-app-action", handler);
     return () => window.removeEventListener("vim-app-action", handler);
   }, []);
+
+  // Vim 文件树动作：refresh / highlight-only / open
+  // - highlight-only：仅在 Sidebar 中把路径标为「hover/选中高亮」但不打开文件（用于 j/k 移动光标）
+  // - open：调用 handleSelectFile 真正在编辑器中打开文件 / 目录
+  // - refresh：treeRefreshKey++ 触发侧栏 loadRoot
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ action?: string; path?: string }>).detail ?? {};
+      switch (detail.action) {
+        case "refresh":
+          setTreeRefreshKey((k) => k + 1);
+          break;
+        case "open":
+          if (typeof detail.path === "string" && detail.path) {
+            handleSelectFile(detail.path);
+          }
+          break;
+      }
+    };
+    window.addEventListener("vim-sidebar-action", handler);
+    return () => window.removeEventListener("vim-sidebar-action", handler);
+  }, [handleSelectFile]);
 
   // Vim 窗口导航：Ctrl+w h/j/k/l 切换焦点
   useWindowNavigation();
@@ -3844,15 +3916,38 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
           )}
           </div>
 
-          {/* 底部浮动控件 */}
-          {!canvasFilePath && !graphViewOpen && isCurrentFileMarkdown && (
-            <button
-              className="editor-mode-toggle source-mode-toggle floating-mode-toggle"
-              onClick={cycleMode}
-              title={`${MODE_LABELS[effectiveMode]} (Ctrl+/)`}
-            >
-              {MODE_LABELS[effectiveMode]}
-            </button>
+          {/* 底部浮动控件：左下角（Vim 状态徽标 + 模式切换按钮） */}
+          {(vimEnabled || (!canvasFilePath && !graphViewOpen && isCurrentFileMarkdown)) && (
+            <div className="editor-bottom-controls editor-bottom-left">
+              {/* Vim 模式徽标：始终在模式切换按钮的左边；若没有模式按钮则直接在最左边 */}
+              {vimEnabled && (() => {
+                const badgeLetter =
+                  vimMode === "insert" ? "I" :
+                  vimMode === "visual" ? "V" : "N";
+                const badgeTitle =
+                  vimMode === "insert" ? t("app.vimMode.insert", "INSERT 模式") :
+                  vimMode === "visual" ? t("app.vimMode.visual", "VISUAL 模式") :
+                  t("app.vimMode.normal", "NORMAL 模式");
+                const badgeClass =
+                  vimMode === "insert" ? "vim-mode-badge vim-mode-badge--insert" :
+                  vimMode === "visual" ? "vim-mode-badge vim-mode-badge--visual" :
+                  "vim-mode-badge vim-mode-badge--normal";
+                return (
+                  <span className={badgeClass} title={badgeTitle}>
+                    {badgeLetter}
+                  </span>
+                );
+              })()}
+              {!canvasFilePath && !graphViewOpen && isCurrentFileMarkdown && (
+                <button
+                  className="editor-mode-toggle source-mode-toggle"
+                  onClick={cycleMode}
+                  title={`${MODE_LABELS[effectiveMode]} (Ctrl+/)`}
+                >
+                  {MODE_LABELS[effectiveMode]}
+                </button>
+              )}
+            </div>
           )}
           {!canvasFilePath && !graphViewOpen && (
           <div className="editor-bottom-controls editor-bottom-right">

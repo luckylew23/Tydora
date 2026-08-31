@@ -205,6 +205,34 @@ export function createVimExtension(options: VimAdapterOptions): Extension[] {
           },
           preventDefault: true,
         },
+        // Ctrl+[ 等价 ESC：退出 insert/visual 回 normal（Vim 传统行为）
+        {
+          key: "Ctrl-[",
+          run: (view: EditorView): boolean => {
+            try {
+              const cm = getCM(view);
+              if (!cm) return false;
+              const vimState = (cm as unknown as { state?: { vim?: { mode?: string } } }).state;
+              const mode = vimState?.vim?.mode;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const cmAny = cm as any;
+              if (mode === "insert") {
+                Vim.exitInsertMode(cmAny);
+                return true;
+              }
+              if (mode === "visual") {
+                Vim.exitVisualMode(cmAny);
+                return true;
+              }
+              if (mode === "normal") return false;
+              Vim.exitInsertMode(cmAny);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+          preventDefault: true,
+        },
       ])
     ),
 
@@ -219,6 +247,14 @@ export function createVimExtension(options: VimAdapterOptions): Extension[] {
               options.onModeChange?.(mapVimMode(e.mode));
             });
             options.onModeChange("normal");
+          }
+          // jk 快速序列（insert 态）退出 insert：等价 <Esc>
+          // 绑定一次即可，cm-vim 全局 map 不随 view 销毁失效
+          if (cm) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (Vim as any).map?.("jk", "<Esc>", "insert");
+            } catch { /* ignore */ }
           }
         } catch {
           // getCM 在非 vim 扩展环境下会抛错，安全忽略

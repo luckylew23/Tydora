@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { loadVimConfig, saveVimConfig, type VimConfig } from "../config/configLoader";
+import { CONFLICT_KEYS } from "../config/conflictKeys";
 
 export function VimSettingsPanel() {
   const { t } = useTranslation();
@@ -24,6 +25,15 @@ export function VimSettingsPanel() {
   const update = (patch: Partial<VimConfig>) => {
     setConfig((prev) => {
       const next = { ...prev, ...patch };
+      saveVimConfig(next);
+      return next;
+    });
+  };
+
+  // 更新单个冲突键的让渡状态
+  const updateConflictKey = (id: string, yielded: boolean) => {
+    setConfig((prev) => {
+      const next = { ...prev, conflictKeys: { ...(prev.conflictKeys ?? {}), [id]: yielded } };
       saveVimConfig(next);
       return next;
     });
@@ -56,6 +66,7 @@ export function VimSettingsPanel() {
       </div>
 
       {config.enabled && (
+        <>
         <div className="canvas-settings-card">
           <div className="canvas-settings-row">
             <div className="canvas-settings-row-label">
@@ -104,6 +115,51 @@ export function VimSettingsPanel() {
             </div>
           </div>
         </div>
+
+        {/* ── 冲突快捷键让渡 ── */}
+        <div className="canvas-settings-card">
+          <div className="canvas-settings-row" style={{ borderBottom: "none", paddingBottom: 4 }}>
+            <div className="canvas-settings-row-label">
+              <span className="canvas-settings-row-title">
+                {t("settings.vim.conflictKeys", "冲突快捷键让渡")}
+              </span>
+              <span className="canvas-settings-row-desc">
+                {t(
+                  "settings.vim.conflictKeysDesc",
+                  "以下快捷键在 Vim normal/visual 模式下与 App 快捷键冲突。开启表示让渡给 Vim（App 快捷键不触发），关闭表示 App 快捷键照常生效。"
+                )}
+              </span>
+            </div>
+          </div>
+          {CONFLICT_KEYS.map((k) => {
+            const yielded = config.conflictKeys?.[k.id] ?? k.defaultYield;
+            return (
+              <div key={k.id} className="canvas-settings-row">
+                <div className="canvas-settings-row-label">
+                  <span className="canvas-settings-row-title">
+                    <kbd style={{ marginRight: 8 }}>{k.keys}</kbd>
+                    {t(`settings.vim.conflict.${k.id}`, k.label)}
+                  </span>
+                  <span className="canvas-settings-row-desc">
+                    {t(
+                      `settings.vim.conflict.${k.id}.vimAction`,
+                      `Vim: ${k.vimAction}`
+                    )}
+                  </span>
+                </div>
+                <label className="settings-switch">
+                  <input
+                    type="checkbox"
+                    checked={yielded}
+                    onChange={(e) => updateConflictKey(k.id, e.target.checked)}
+                  />
+                  <span className="settings-switch-slider" />
+                </label>
+              </div>
+            );
+          })}
+        </div>
+        </>
       )}
     </div>
   );

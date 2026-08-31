@@ -82,8 +82,9 @@ npm run tauri build
 
 ## 技术栈
 
+
 | 层级   | 技术                                                        |
-| ------ | ----------------------------------------------------------- |
+| -------- | ------------------------------------------------------------- |
 | 前端   | React 19 + TypeScript + Vite 6                              |
 | 编辑器 | TipTap 3.x (WYSIWYG) + CodeMirror 6 (源码)                  |
 | 后端   | Rust (Tauri v2)                                             |
@@ -94,9 +95,14 @@ npm run tauri build
 
 欢迎提交 Issue 和 Pull Request！
 
-## 许可证
 
-本项目使用 [Apache License 2.0](LICENSE) 许可证。
+
+## Contributors
+
+<a href="https://github.com/zuorn/Tydora/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=zuorn/Tydora" />
+</a>
+
 
 
 ## Star History
@@ -108,3 +114,8 @@ npm run tauri build
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zuorn/Tydora&type=date&legend=top-left&sealed_token=UbjlpYMAKlj9YxE9TrI3oZEpbMArNY0oRBtXdZ4GlQe9lQG0bgKmhoGnECO6aR-BCg34sIpFHJLyux4trfCJQVTOG2DIOa2HKERx9cCUMNhsoboxUFNz8g" />
  </picture>
 </a>
+
+
+## 许可证
+
+本项目使用 [Apache License 2.0](LICENSE) 许可证。
