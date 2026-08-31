@@ -10,6 +10,10 @@ export interface ThemeManifest {
   importedAt: string;
   previewBg?: string;
   previewAccent?: string;
+  previewText?: string;
+  previewSecondary?: string;
+  /** Explicit light/dark; inferred from --bg-primary when missing. */
+  isDark?: boolean;
 }
 
 export interface ThemeVariable {
@@ -25,16 +29,25 @@ const MANIFEST_FILE = "manifest.json";
 // Variables that should be detected as color pickers
 const COLOR_PATTERNS = [
   /^--bg-/, /^--text-/, /^--accent/, /^--border$/, /^--danger$/,
+  /^--scrollbar-/, /^--metadata-/, /^--blockquote-/, /^--table-/, /^--tag-/,
   /^--ring$/, /^--card/, /^--popover/, /^--primary/, /^--secondary/,
   /^--muted/, /^--destructive$/, /^--input$/, /^--sidebar/,
-  /^--breathe/, /^--highlight/,
+  /^--breathe/, /^--highlight/, /^--hljs-/,
 ];
 
 // Variables that are font families
 const FONT_PATTERNS = [/^--font-/, /^--editor-font$/];
 
 // Variables that are sizes
-const SIZE_PATTERNS = [/^--editor-font-size$/, /^--radius$/];
+const SIZE_PATTERNS = [
+  /^--editor-font-size$/,
+  /^--font-mono-size$/,
+  /^--sidebar-chrome-opacity$/,
+  /^--radius/,
+  /^--padding-/,
+  /^--scrollbar-size$/,
+  /^--blockquote-border-width$/,
+];
 
 // ── Path Helpers ─────────────────────────────────────────────────────
 
@@ -184,7 +197,8 @@ export async function importTheme(
   await writeTextFile(joinPath(dir, fileName), processedCss);
 
   // Extract preview colors
-  const { bg, accent } = extractPreviewColors(processedCss);
+  const preview = extractPreviewColors(processedCss);
+  const isDark = inferAppThemeIsDark(parseCssVariables(processedCss));
 
   // Update manifest
   const manifests = await loadManifest();
@@ -193,8 +207,8 @@ export async function importTheme(
     name: displayName,
     fileName,
     importedAt: new Date().toISOString(),
-    previewBg: bg,
-    previewAccent: accent,
+    ...preview,
+    isDark,
   };
   manifests.push(manifest);
   await saveManifest(manifests);
@@ -227,13 +241,109 @@ export async function saveThemeCss(id: string, css: string): Promise<void> {
   await writeTextFile(joinPath(dir, `${id}.css`), css);
 }
 
+/** Create a custom theme from a full variable list (fork / template). */
+export async function createThemeFromVariables(
+  displayName: string,
+  variables: ThemeVariable[],
+  isDark?: boolean,
+): Promise<ThemeManifest> {
+  const dir = await ensureThemesDir();
+  const id = generateThemeId();
+  const css = buildThemeCss(id, variables);
+  const fileName = `${id}.css`;
+  await writeTextFile(joinPath(dir, fileName), css);
+
+  const preview = extractPreviewColors(css);
+  const manifests = await loadManifest();
+  const manifest: ThemeManifest = {
+    id,
+    name: displayName,
+    fileName,
+    importedAt: new Date().toISOString(),
+    ...preview,
+    isDark: typeof isDark === "boolean" ? isDark : inferAppThemeIsDark(variables),
+  };
+  manifests.push(manifest);
+  await saveManifest(manifests);
+  return manifest;
+}
+
+export async function renameTheme(id: string, name: string): Promise<ThemeManifest | null> {
+  const manifests = await loadManifest();
+  const idx = manifests.findIndex((m) => m.id === id);
+  if (idx < 0) return null;
+  manifests[idx] = { ...manifests[idx], name: name.trim() || manifests[idx].name };
+  await saveManifest(manifests);
+  return manifests[idx];
+}
+
+/** Persist variables and refresh manifest preview colors. */
+export async function persistThemeVariables(
+  id: string,
+  variables: ThemeVariable[],
+): Promise<ThemeManifest | null> {
+  const css = buildThemeCss(id, variables);
+  await saveThemeCss(id, css);
+  const preview = extractPreviewColors(css);
+  const manifests = await loadManifest();
+  const idx = manifests.findIndex((m) => m.id === id);
+  if (idx < 0) return null;
+  manifests[idx] = {
+    ...manifests[idx],
+    ...preview,
+    isDark: inferAppThemeIsDark(variables),
+  };
+  await saveManifest(manifests);
+  return manifests[idx];
+}
+
 // ── Preview Color Extraction ─────────────────────────────────────────
 
-export function extractPreviewColors(css: string): { bg: string; accent: string } {
+export interface ThemePreviewColors {
+  previewBg: string;
+  previewAccent: string;
+  previewText: string;
+  previewSecondary: string;
+}
+
+export function extractPreviewColors(css: string): ThemePreviewColors {
   const vars = parseCssVariables(css);
-  const bg = vars.find((v) => v.name === "--bg-primary")?.value || "#ffffff";
-  const accent = vars.find((v) => v.name === "--accent")?.value || "#4eb289";
-  return { bg, accent };
+  const get = (name: string, fallback: string) =>
+    vars.find((v) => v.name === name)?.value || fallback;
+  return {
+    previewBg: get("--bg-primary", "#ffffff"),
+    previewAccent: get("--accent", "#4eb289"),
+    previewText: get("--text-primary", "#1e293b"),
+    previewSecondary: get("--bg-secondary", get("--border", "#e2e8f0")),
+  };
+}
+
+/** Resolve preview palette for a manifest (fills gaps for older manifests). */
+export function resolveThemePreviewColors(m: ThemeManifest): [string, string, string, string] {
+  return [
+    m.previewBg || "#ffffff",
+    m.previewAccent || "#4eb289",
+    m.previewText || "#1e293b",
+    m.previewSecondary || m.previewBg || "#e2e8f0",
+  ];
+}
+
+/** Infer dark UI theme from --bg-primary luminance. */
+export function inferAppThemeIsDark(variables: ThemeVariable[]): boolean {
+  const bg = variables.find((v) => v.name === "--bg-primary")?.value?.trim();
+  if (!bg || !/^#[0-9a-fA-F]{3,8}$/.test(bg)) {
+    // rgba / oklch fallback: treat very dark-looking strings
+    return /oklch\(\s*0\.[0-4]|rgba?\(\s*\d{1,2}\s*,|#[0-2]/.test(bg || "");
+  }
+  let h = bg.slice(1);
+  if (h.length === 3 || h.length === 4) {
+    h = h.split("").map((c) => c + c).join("");
+  }
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return lum < 0.45;
 }
 
 // ── Code Theme Operations ──────────────────────────────────────
@@ -273,24 +383,58 @@ export async function saveCodeThemeManifest(manifests: CustomCodeTheme[]): Promi
   await writeTextFile(joinPath(dir, "manifest.json"), JSON.stringify(manifests, null, 2));
 }
 
-export async function importCodeThemeFile(
-  filePath: string,
+export function buildCodeThemeCss(variables: ThemeVariable[]): string {
+  const hljsVars = variables.filter((v) => v.name.startsWith("--hljs-"));
+  const lines = hljsVars.map((v) => `  ${v.name}: ${v.value};`);
+  return `:root {\n${lines.join("\n")}\n}`;
+}
+
+export function extractCodeThemePreviewColors(variables: ThemeVariable[]): string[] {
+  const get = (name: string, fallback: string) =>
+    variables.find((v) => v.name === name)?.value.trim() || fallback;
+  return [
+    get("--hljs-keyword", "#d73a49"),
+    get("--hljs-string", "#032f62"),
+    get("--hljs-comment", "#6a737d"),
+    get("--hljs-number", "#005cc5"),
+    get("--hljs-built_in", "#e36209"),
+  ];
+}
+
+/** Infer dark/light from average luminance of highlight colors. */
+export function inferCodeThemeIsDark(variables: ThemeVariable[]): boolean {
+  const colors = variables
+    .filter((v) => v.name.startsWith("--hljs-"))
+    .map((v) => v.value.trim())
+    .filter((v) => /^#[0-9a-fA-F]{3,8}$/.test(v));
+  if (colors.length === 0) return false;
+
+  let sum = 0;
+  for (const hex of colors) {
+    let h = hex.slice(1);
+    if (h.length === 3 || h.length === 4) {
+      h = h.split("").map((c) => c + c).join("");
+    }
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    // Relative luminance (sRGB approx)
+    sum += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  }
+  // Token colors on dark themes tend to be brighter (pastel-ish)
+  return sum / colors.length > 0.45;
+}
+
+export async function createCodeThemeFromVariables(
   displayName: string,
+  variables: ThemeVariable[],
+  isDark: boolean,
 ): Promise<CustomCodeTheme> {
   const dir = await ensureCodeThemesDir();
-  const css = await readTextFile(filePath);
   const id = generateThemeId();
-
-  // Extract variables
-  const variables = parseCssVariables(css);
-  const isDark = css.includes("--bg-primary") &&
-    (css.includes("#1") || css.includes("#2") || css.includes("oklch(0"));
-
-  // Build processed CSS with :root selector
-  const processedCss = `:root {\n${variables.map((v) => `  ${v.name}: ${v.value};`).join("\n")}\n}`;
-
+  const css = buildCodeThemeCss(variables);
   const fileName = `${id}.css`;
-  await writeTextFile(joinPath(dir, fileName), processedCss);
+  await writeTextFile(joinPath(dir, fileName), css);
 
   const manifests = await loadCodeThemeManifest();
   const manifest: CustomCodeTheme = {
@@ -299,11 +443,55 @@ export async function importCodeThemeFile(
     fileName,
     importedAt: new Date().toISOString(),
     isDark,
+    previewColors: extractCodeThemePreviewColors(variables),
   };
   manifests.push(manifest);
   await saveCodeThemeManifest(manifests);
-
   return manifest;
+}
+
+export async function persistCodeThemeVariables(
+  id: string,
+  variables: ThemeVariable[],
+  isDark?: boolean,
+): Promise<CustomCodeTheme | null> {
+  const dir = await ensureCodeThemesDir();
+  const manifests = await loadCodeThemeManifest();
+  const idx = manifests.findIndex((m) => m.id === id);
+  if (idx < 0) return null;
+
+  const css = buildCodeThemeCss(variables);
+  await writeTextFile(joinPath(dir, manifests[idx].fileName), css);
+
+  manifests[idx] = {
+    ...manifests[idx],
+    previewColors: extractCodeThemePreviewColors(variables),
+    isDark: typeof isDark === "boolean" ? isDark : inferCodeThemeIsDark(variables),
+  };
+  await saveCodeThemeManifest(manifests);
+  return manifests[idx];
+}
+
+export async function renameCodeTheme(id: string, name: string): Promise<CustomCodeTheme | null> {
+  const manifests = await loadCodeThemeManifest();
+  const idx = manifests.findIndex((m) => m.id === id);
+  if (idx < 0) return null;
+  manifests[idx] = { ...manifests[idx], name: name.trim() || manifests[idx].name };
+  await saveCodeThemeManifest(manifests);
+  return manifests[idx];
+}
+
+export async function importCodeThemeFile(
+  filePath: string,
+  displayName: string,
+): Promise<CustomCodeTheme> {
+  const css = await readTextFile(filePath);
+  const variables = parseCssVariables(css).filter((v) => v.name.startsWith("--hljs-"));
+  if (variables.length === 0) {
+    throw new Error("代码主题文件缺少 --hljs-* 变量");
+  }
+  const isDark = inferCodeThemeIsDark(variables);
+  return createCodeThemeFromVariables(displayName, variables, isDark);
 }
 
 export async function deleteCodeThemeFile(id: string): Promise<void> {

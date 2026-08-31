@@ -40,6 +40,7 @@
   padding: 4px 8px;
   cursor: pointer;
   user-select: none;
+  -webkit-user-select: none;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
@@ -112,6 +113,8 @@
   margin: 1px 4px;
   transition: background 0.1s;
   position: relative;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .bookmark-item::before {
@@ -133,7 +136,7 @@
 }
 
 .bookmark-item.drag-over-top {
-  border-top: 2px solid var(--accent-color, #4a9eff);
+  border-top: 2px solid var(--accent, #4a9eff);
 }
 
 .bookmark-item-info {
@@ -260,7 +263,7 @@
 }
 
 .bookmark-dialog-input:focus {
-  border-color: var(--accent-color, #4a9eff);
+  border-color: var(--accent, #4a9eff);
 }
 
 .bookmark-dialog-input::placeholder {
@@ -300,7 +303,7 @@
 }
 
 .bookmark-dialog-select:hover {
-  border-color: var(--accent-color, #4a9eff);
+  border-color: var(--accent, #4a9eff);
 }
 
 .bookmark-dialog-dropdown {
@@ -319,8 +322,9 @@
 }
 
 .bookmark-dialog-dropdown-item {
-  padding: 6px 10px;
+  padding: var(--menu-item-padding-y) var(--menu-item-padding-x);
   font-size: 13px;
+  line-height: var(--menu-item-line-height);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -332,7 +336,7 @@
 }
 
 .bookmark-dialog-dropdown-item.active {
-  color: var(--accent-color, #4a9eff);
+  color: var(--accent, #4a9eff);
 }
 
 .bookmark-dialog-dropdown-count {
@@ -356,7 +360,7 @@
 .bookmark-dialog-btn-text {
   background: none;
   border: none;
-  color: var(--accent-color, #4a9eff);
+  color: var(--accent, #4a9eff);
   font-size: 12px;
   cursor: pointer;
   padding: 4px 8px;
@@ -394,9 +398,9 @@
 }
 
 .bookmark-dialog-btn-save {
-  background: var(--accent-color, #4a9eff);
+  background: var(--accent, #4a9eff);
   color: white;
-  border-color: var(--accent-color, #4a9eff);
+  border-color: var(--accent, #4a9eff);
 }
 
 .bookmark-dialog-btn-save:hover {

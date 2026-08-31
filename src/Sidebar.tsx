@@ -1756,6 +1756,8 @@ function FileTree({
         dragNodeRef.current = dragStartRef.current.path;
         isDragDirectoryRef.current = dragStartRef.current.isDirectory;
         setIsDragging(true);
+        // 清掉拖拽阈值内已产生的文本选区（WKWebView 上 user-select 偶发失效）
+        window.getSelection()?.removeAllRanges();
       }
 
       // Find which tree-node the mouse is over
@@ -1856,6 +1858,18 @@ function FileTree({
       document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [handleReload]);
+
+  // 禁止文件树文本选中（重命名输入框除外）；WKWebView 对 CSS user-select 不完全可靠
+  useEffect(() => {
+    const el = treeRef.current;
+    if (!el) return;
+    const onSelectStart = (e: Event) => {
+      if ((e.target as HTMLElement).closest(".tree-name-input")) return;
+      e.preventDefault();
+    };
+    el.addEventListener("selectstart", onSelectStart);
+    return () => el.removeEventListener("selectstart", onSelectStart);
+  }, []);
 
   // ── Blank area actions ──
   /** 当前选中文件所在目录；未选中或不在本仓库内时回退到根目录。 */
@@ -2136,7 +2150,15 @@ function FileTree({
           )}
         </button>
       </div>
-      <div ref={treeRef} className={`sidebar-tree${hidden ? " hidden" : ""}${isDragging ? " dragging" : ""}${dragOverPath === rootPath ? " drag-over" : ""}`} onContextMenu={handleBlankContextMenu} onScroll={handleScroll} onClick={(e) => { if (e.target === e.currentTarget) handleClearSelection(); }} data-path={rootPath} data-is-dir="1">
+      <div
+        ref={treeRef}
+        className={`sidebar-tree${hidden ? " hidden" : ""}${isDragging ? " dragging" : ""}${dragOverPath === rootPath ? " drag-over" : ""}`}
+        onContextMenu={handleBlankContextMenu}
+        onScroll={handleScroll}
+        onClick={(e) => { if (e.target === e.currentTarget) handleClearSelection(); }}
+        data-path={rootPath}
+        data-is-dir="1"
+      >
       {rootNodes.length > 0 &&
         rootNodes.map((node) => (
           <TreeNodeComp
@@ -2615,6 +2637,18 @@ export default function Sidebar({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Vim Leader 菜单的全局搜索：监听 vim-sidebar-tab 事件切换侧栏 tab
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { tab } = (e as CustomEvent).detail;
+      if (tab === "search" || tab === "files" || tab === "outline" || tab === "bookmarks") {
+        switchTab(tab);
+      }
+    };
+    window.addEventListener("vim-sidebar-tab", handler);
+    return () => window.removeEventListener("vim-sidebar-tab", handler);
+  }, [switchTab]);
+
   // 外部触发切换到大纲（如双击 .md 文件时按设置自动展开大纲）
   const prevOutlineTriggerRef = useRef<number | undefined>(outlineTrigger);
   useEffect(() => {
@@ -2659,7 +2693,7 @@ export default function Sidebar({
       className={`sidebar${collapsed ? " collapsed" : ""}${isResizing ? " resizing" : ""}`}
       style={{ width: collapsed ? 0 : width }}
     >
-      <div className="sidebar-topbar" />
+      <div className="sidebar-topbar" data-tauri-drag-region="deep" />
 
       <div className="sidebar-header">
         <div className="sidebar-tabs-wrapper">

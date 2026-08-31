@@ -1,5 +1,10 @@
 export { isBuiltinTheme } from "./ThemeManager";
 export { useTheme, ThemeProvider } from "./ThemeContext";
 export type { ThemeName } from "./ThemeContext";
+export type { AppearanceMode, ResolvedAppearance, ThemePair } from "./appearance";
 export { getCodeThemeVariables, getDefaultCodeTheme, CODE_THEMES } from "./codeThemes";
 export type { CustomCodeTheme } from "./codeThemes";
+export { THEME_COLOR_SCHEMA, mergeWithSchema } from "./themeTokens";
+export { CODE_THEME_COLOR_SCHEMA, mergeCodeThemeWithSchema } from "./codeThemeTokens";
+export { ThemeColorField } from "./ThemeColorField";
+export { ThemeSizeField } from "./ThemeSizeField";

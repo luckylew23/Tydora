@@ -1,4 +1,4 @@
-import { useRef, useEffect, forwardRef, useImperativeHandle, useMemo } from "react";
+import { useRef, useEffect, forwardRef, useImperativeHandle, useMemo, useCallback } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, Decoration, ViewPlugin, placeholder, ViewUpdate } from "@codemirror/view";
 import { EditorState, Compartment, RangeSetBuilder } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -18,6 +18,13 @@ import { tags } from "@lezer/highlight";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { useVim, createVimExtension, useLeader, LeaderMenu, executeCodeMirrorAction } from "../vim";
+import type { VimMode } from "../vim/types";
+import { getCM, Vim as CMVim } from "@replit/codemirror-vim";
+import { prefixMConfig } from "../vim/config/prefixM";
+import { prefixGConfig } from "../vim/config/prefixG";
+import { prefixZConfig } from "../vim/config/prefixZ";
+import { prefixTConfig } from "../vim/config/prefixT";
 
 
 // 判断是否为 Markdown 文件
@@ -204,7 +211,7 @@ const markdownHighlighting = syntaxHighlighting(
     { tag: tags.bool, color: "var(--hljs-keyword, #0550ae)" },
     { tag: tags.number, color: "var(--hljs-number, #005cc5)" },
     { tag: tags.comment, color: "var(--hljs-comment, #6e7781)", fontStyle: "italic" },
-    { tag: tags.monospace, fontFamily: "var(--editor-font, 'Fira Code', 'Consolas', monospace)", fontSize: "0.9em" },
+    { tag: tags.monospace, fontFamily: "var(--font-mono, 'Fira Code', 'Consolas', monospace)", fontSize: "var(--font-mono-size, 14px)" },
     { tag: tags.processingInstruction, color: "var(--hljs-keyword, #cf222e)" },
     { tag: tags.special(tags.string), color: "var(--hljs-string, #0a3069)" },
     { tag: tags.contentSeparator, color: "var(--text-secondary, #999)" },
@@ -221,7 +228,7 @@ const codeHighlighting = syntaxHighlighting(
     { tag: tags.bool, color: "var(--hljs-keyword, #0550ae)" },
     { tag: tags.number, color: "var(--hljs-number, #005cc5)" },
     { tag: tags.comment, color: "var(--hljs-comment, #6e7781)", fontStyle: "italic" },
-    { tag: tags.monospace, fontFamily: "var(--editor-font, 'Fira Code', 'Consolas', monospace)", fontSize: "0.9em" },
+    { tag: tags.monospace, fontFamily: "var(--font-mono, 'Fira Code', 'Consolas', monospace)", fontSize: "var(--font-mono-size, 14px)" },
     { tag: tags.processingInstruction, color: "var(--hljs-keyword, #cf222e)" },
     { tag: tags.special(tags.string), color: "var(--hljs-string, #0a3069)" },
     { tag: tags.meta, color: "var(--hljs-comment, #6e7781)" },
@@ -364,6 +371,288 @@ export interface CodeMirrorEditorHandle {
 }
 
 const highlightCompartment = new Compartment();
+// Vim 扩展独立 Compartment：动态开关 vim 时不重建整个 editor
+const vimCompartment = new Compartment();
+
+// ════════════════════════════════════════════════════════════════
+// t 前缀键：CodeMirror Markdown 源码表格操作
+// ════════════════════════════════════════════════════════════════
+
+/** 一行文本是否"像是 Markdown 表格的一行"（含 2+ 个 | 或首尾为 |）。 */
+function looksLikeTableRow(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const pipes = (t.match(/\|/g) ?? []).length;
+  return pipes >= 2 || (t.startsWith("|") && pipes >= 1);
+}
+
+/** 是否为分隔行：形如 | --- | :---: | ---: | 。 */
+function isSeparatorRow(text: string): boolean {
+  if (!looksLikeTableRow(text)) return false;
+  const cells = splitTableRow(text).map((c) => c.trim());
+  if (cells.length < 1) return false;
+  return cells.every(
+    (c) => /^:?-{2,}:?$/.test(c) || /^:?-{3,}:?$/.test(c)
+  );
+}
+
+/** 将一行表格拆成单元格数组（去掉首尾空串），保留原内容（不去空格）。 */
+function splitTableRow(text: string): string[] {
+  const parts = text.split("|");
+  // 如果文本两端有 |，会出现两端空串，去掉
+  if (parts.length >= 2 && parts[0].trim() === "") parts.shift();
+  if (parts.length >= 1 && parts[parts.length - 1].trim() === "") parts.pop();
+  return parts;
+}
+
+/** 单元格数组合并回表格行文本（首尾带 | ，单元格间 " | " 分隔）。 */
+function joinTableRow(cells: string[], pad = " "): string {
+  const inside = cells.map((c) => {
+    const s = c === undefined ? "" : c;
+    return s.trim() === "" ? `${pad}${pad}` : `${pad}${s}${pad}`;
+  }).join("|");
+  return `|${inside}|`;
+}
+
+/** Markdown 表格识别结果。 */
+interface TableScope {
+  startRow: number;   // 1-based，含 header
+  endRow: number;     // 1-based（inclusive）
+  rows: string[];     // 从 startRow 到 endRow 的每一行文本
+  separatorIdx: number; // rows 数组中的分隔行下标
+  colCount: number;   // 列数
+  curColIdx: number;  // 光标所在列（0-based，clamp 到列数范围内）
+  cursorRowIdx: number; // rows 数组中的当前行下标
+}
+
+/** 检测光标是否在 Markdown 表格中，并返回作用域信息。 */
+function detectMarkdownTable(
+  doc: { lineAt: (pos: number) => { text: string; number: number; from: number; to: number; length: number }; lines: number },
+  cursorLineNo: number,
+  cursorLineText: string,
+  cursorCol: number
+): TableScope | null {
+  if (!looksLikeTableRow(cursorLineText)) return null;
+
+  const totalLines = doc.lines;
+  let startRow = cursorLineNo;
+  while (startRow > 1) {
+    const above = doc.lineAt(startRow - 1);
+    if (looksLikeTableRow(above.text)) startRow -= 1; else break;
+  }
+  let endRow = cursorLineNo;
+  while (endRow < totalLines) {
+    const below = doc.lineAt(endRow + 1);
+    if (looksLikeTableRow(below.text)) endRow += 1; else break;
+  }
+  const rows: string[] = [];
+  for (let r = startRow; r <= endRow; r++) rows.push(doc.lineAt(r).text);
+
+  // 必须存在分隔行
+  let separatorIdx = -1;
+  for (let i = 0; i < rows.length; i++) if (isSeparatorRow(rows[i])) { separatorIdx = i; break; }
+  if (separatorIdx < 0) return null;
+  // 分隔行必须在 header（index 0）之后：GFM 要求第 2 行
+  if (separatorIdx !== 1) return null;
+
+  const colCount = splitTableRow(rows[separatorIdx]).length;
+  if (colCount < 1) return null;
+
+  const cursorRowIdx = cursorLineNo - startRow;
+  // 当前列：以 cursorCol（光标在该行的字符偏移）计算
+  const curText = cursorLineText;
+  let pipesSeen = 0;
+  for (let i = 0; i < curText.length && i < cursorCol; i++) {
+    if (curText[i] === "|") pipesSeen += 1;
+  }
+  // 第一列前有一个开头 | 或没有
+  const cells = splitTableRow(curText);
+  const realColCount = cells.length;
+  // pipesSeen - (首字符是否为 | ? 1 : 0) 大致是第几个 cell
+  const startsWithPipe = curText.trim().startsWith("|");
+  let column = startsWithPipe ? pipesSeen - 1 : pipesSeen;
+  if (column < 0) column = 0;
+  if (column > realColCount - 1) column = realColCount - 1;
+  // clamp 到 colCount（以分隔行为准）
+  const curColIdx = Math.max(0, Math.min(colCount - 1, column));
+
+  return { startRow, endRow, rows, separatorIdx, colCount, curColIdx, cursorRowIdx };
+}
+
+/** 渲染一"对齐"单元格为 Markdown 分隔行的 --- 样式。 */
+function alignSeparatorCell(raw: string, align: "left" | "center" | "right"): string {
+  // 保留原本的横线长度近似，只改冒号
+  const dashes = "-".repeat(Math.max(3, raw.trim().replace(/[:]/g, "").length));
+  if (align === "left") return `:${dashes}`;
+  if (align === "right") return `${dashes}:`;
+  return `:${dashes}:`;
+}
+
+/** CodeMirror Markdown 表格动作。动作成功返回 true。 */
+function executeCMTableAction(view: EditorView, op: string): boolean {
+  try {
+    const doc = view.state.doc;
+    const head = view.state.selection.main.head;
+    const curLine = doc.lineAt(head);
+    const cursorCol = head - curLine.from; // 0-based，在该行中的字符偏移
+    const scope = detectMarkdownTable(doc, curLine.number, curLine.text, cursorCol);
+    if (!scope) return false;
+
+    const { startRow, endRow, rows, separatorIdx, colCount, curColIdx, cursorRowIdx } = scope;
+    let newRows = rows.slice();
+    let nextCursor: { anchor: number; head: number } | null = null;
+    let selPreferredCol = curColIdx;
+
+    switch (op) {
+      // ── 对齐（仅写分隔行对应列的冒号） ──
+      case "align-left":
+      case "align-center":
+      case "align-right": {
+        const align = op === "align-left" ? "left" : op === "align-center" ? "center" : "right";
+        const sepCells = splitTableRow(newRows[separatorIdx]);
+        // 以分隔行列数为准
+        const idx = Math.max(0, Math.min(sepCells.length - 1, curColIdx));
+        sepCells[idx] = alignSeparatorCell(sepCells[idx] ?? "---", align);
+        newRows[separatorIdx] = joinTableRow(sepCells);
+        break;
+      }
+
+      // ── 插入行 ────────────────────────────────────────
+      case "add-row-above":
+      case "add-row-below": {
+        // 不能插入到 header 与 分隔行之间（分隔行必须保持 index=1）
+        const below = op === "add-row-below";
+        let insertAtRow = cursorRowIdx + (below ? 1 : 0);
+        // 如果光标在分隔行：below 就插下一个；above 就插分隔行上方 = 会把 header/separator 隔开 → 改为插 separator 下方（等价 below）
+        if (cursorRowIdx === separatorIdx) insertAtRow = below ? separatorIdx + 1 : separatorIdx + 1;
+        // 如 insertAtRow 在分隔行之前 → 只能分隔行之后插（避免破坏 header+separator 紧邻）
+        if (insertAtRow <= separatorIdx) insertAtRow = separatorIdx + 1;
+        const emptyCells = new Array(colCount).fill("  ");
+        newRows.splice(insertAtRow, 0, joinTableRow(emptyCells));
+        // 光标移到新行
+        const newRowIdxInArr = insertAtRow;
+        const newRowIdx1Based = startRow + newRowIdxInArr;
+        selPreferredCol = curColIdx;
+        // 先占位，后面统一根据 newRows 算位置
+        nextCursor = {
+          anchor: -1, head: -1, // 稍后计算
+        };
+        // 存索引给下面
+        (nextCursor as any)._newRowIdxInArr = newRowIdxInArr;
+        (nextCursor as any)._newColIdx = selPreferredCol;
+        void newRowIdx1Based;
+        break;
+      }
+
+      // ── 插入列 ────────────────────────────────────────
+      case "add-col-left":
+      case "add-col-right": {
+        const insertLeft = op === "add-col-left";
+        const insertCol = insertLeft ? curColIdx : curColIdx + 1;
+        for (let i = 0; i < newRows.length; i++) {
+          const cells = splitTableRow(newRows[i]);
+          const fill = i === separatorIdx ? "---" : "  ";
+          cells.splice(Math.max(0, Math.min(cells.length, insertCol)), 0, fill);
+          newRows[i] = joinTableRow(cells);
+        }
+        // 光标放在新列上
+        ({});
+        break;
+      }
+
+      // ── 合并单元格（Markdown 原生不支持 colspan ，只能内容拼接） ──
+      case "merge-cells": {
+        // 将当前列与其右侧一列内容合并到当前列（内容用空格连接），右列置空。
+        if (curColIdx + 1 >= colCount) return false;
+        const targetRow = cursorRowIdx === separatorIdx ? separatorIdx + 1 : cursorRowIdx;
+        if (targetRow >= newRows.length) return false;
+        const cells = splitTableRow(newRows[targetRow]);
+        const lCol = Math.max(0, Math.min(cells.length - 1, curColIdx));
+        const rCol = Math.min(cells.length - 1, lCol + 1);
+        const merged = (cells[lCol] ?? "").trim() + (cells[rCol] ?? "").trim() ? ` ${(cells[rCol] ?? "").trim()}` : "";
+        cells[lCol] = (cells[lCol] ?? "").trim() + merged;
+        cells[rCol] = "  ";
+        newRows[targetRow] = joinTableRow(cells);
+        break;
+      }
+
+      // ── 拆分单元格（按空白/分隔符拆分内容 → 两列；没可拆分的等价加空列） ──
+      case "split-cell": {
+        const targetRow = cursorRowIdx === separatorIdx ? separatorIdx + 1 : cursorRowIdx;
+        if (targetRow >= newRows.length) return false;
+        const cells = splitTableRow(newRows[targetRow]);
+        const idx = Math.max(0, Math.min(cells.length - 1, curColIdx));
+        const content = (cells[idx] ?? "").trim();
+        // 尝试按空白/制表符/逗号拆成两段
+        let first = content;
+        let second = "";
+        const m = content.match(/^(\S+)\s+(.*)$/) || content.match(/^(.+?)\s*[,，|/\\]\s*(.*)$/);
+        if (m) { first = m[1]; second = m[2]; }
+        cells[idx] = ` ${first} `;
+        cells.splice(idx + 1, 0, second ? ` ${second} ` : "  ");
+        newRows[targetRow] = joinTableRow(cells);
+        break;
+      }
+
+      default:
+        return false;
+    }
+
+    // 构建 changes
+    const fromLine = doc.lineAt(startRow);
+    const toLine = doc.lineAt(endRow);
+    const insertText = newRows.join("\n");
+
+    // 光标恢复：优先放到新行/新列的起始处，否则保持原偏移
+    let newHead = head;
+    try {
+      // 需要在新 doc 中算位置：先构造新 doc lines 布局 → 简单做法：
+      // 保留 (fromLine.from) 之前不变；insertText 的行中取目标行的第 N 个单元格起点
+      const tmpDocLines = insertText.split("\n");
+      let baseOff = fromLine.from;
+      let targetRowInArr = 0;
+      let targetColInRow = 0;
+      if (nextCursor && (nextCursor as any)._newRowIdxInArr != null) {
+        targetRowInArr = (nextCursor as any)._newRowIdxInArr;
+        targetColInRow = (nextCursor as any)._newColIdx ?? 0;
+      } else if (op.startsWith("add-col-")) {
+        targetRowInArr = cursorRowIdx;
+        targetColInRow = op === "add-col-left" ? curColIdx : curColIdx + 1;
+      } else {
+        targetRowInArr = cursorRowIdx;
+        targetColInRow = curColIdx;
+      }
+      // 计算偏移：跳 targetRowInArr 行 + 在目标行中找第 targetColInRow 个 | 后面
+      for (let i = 0; i < targetRowInArr; i++) baseOff += tmpDocLines[i].length + 1;
+      const targetLineStr = tmpDocLines[targetRowInArr] ?? "";
+      const cells = splitTableRow(targetLineStr);
+      const col = Math.max(0, Math.min(cells.length - 1, targetColInRow));
+      // 找到该行内第 col 个单元格起点的字符偏移
+      let pipesPassed = 0;
+      let off = 0;
+      // 如果首字符是 |，那么 col 0 在第一个 | 之后
+      const leadingPipe = targetLineStr.startsWith("|");
+      if (leadingPipe) off = 1;
+      pipesPassed = leadingPipe ? 1 : 0;
+      while (pipesPassed - (leadingPipe ? 1 : 0) < col && off < targetLineStr.length) {
+        if (targetLineStr[off] === "|") pipesPassed += 1;
+        if (pipesPassed - (leadingPipe ? 1 : 0) >= col) break;
+        off += 1;
+      }
+      // 跳过紧接的空格
+      while (off < targetLineStr.length && targetLineStr[off] === " ") off += 1;
+      newHead = baseOff + off;
+    } catch { /* ignore */ }
+
+    view.dispatch({
+      changes: [{ from: fromLine.from, to: toLine.to, insert: insertText }],
+      selection: { anchor: newHead, head: newHead },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProps>(
   ({ value, onChange, onWordCount, filePath, onSelectionChange }, ref) => {
@@ -413,6 +702,95 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
 
     // 根据 filePath 获取语言扩展
     const languageExtension = useMemo(() => getLanguageExtension(filePath), [filePath]);
+
+    // Vim 模式状态（默认 enabled=false，关闭时零开销）
+    const { enabled: vimEnabled, leaderKey, mode: vimMode, menuTimeout, setMode: onModeChange } = useVim();
+    const vimModeRef = useRef<VimMode>(vimMode);
+    vimModeRef.current = vimMode;
+
+    // Leader 菜单：normal 态按 Space 触发，匹配动作后按命名空间分发
+    const dispatchAction = useCallback((action: string) => {
+      const wasVisual = vimModeRef.current === "visual";
+      let handled = false;
+      if (action.startsWith("editor.")) {
+        const view = viewRef.current;
+        if (!view) return false;
+        handled = executeCodeMirrorAction(action.slice("editor.".length), view);
+      } else if (action.startsWith("app.")) {
+        // app.* 动作通过全局事件分发到 App.tsx，Vim 模块不依赖 App 内部 handler
+        window.dispatchEvent(new CustomEvent("vim-app-action", {
+          detail: { action: action.slice("app.".length) }
+        }));
+        handled = true;
+      } else if (action.startsWith("table.")) {
+        const view = viewRef.current;
+        if (!view) return false;
+        handled = executeCMTableAction(view, action.slice("table.".length));
+      }
+      // Visual 态执行完任何动作后立刻回到 normal 态（对齐真实 Vim 的操作体验）
+      if (handled && wasVisual) {
+        try {
+          const cm = viewRef.current ? getCM(viewRef.current) : null;
+          if (cm) (CMVim.exitVisualMode as any)(cm, true);
+        } catch {
+          // ignore
+        }
+      }
+      return handled;
+    }, []);
+
+    const leader = useLeader({
+      enabled: vimEnabled,
+      triggerKey: leaderKey,
+      timeout: menuTimeout,
+      active: vimMode !== "insert",
+      dispatchAction,
+    });
+
+    // m 前缀键：normal/visual 态按 m 弹出 Markdown 格式化菜单（mb=加粗, mi=斜体…）
+    const prefixM = useLeader({
+      enabled: vimEnabled,
+      triggerKey: "m",
+      timeout: menuTimeout,
+      active: vimMode !== "insert" && !leader.open,
+      dispatchAction,
+      initialItems: prefixMConfig.items,
+    });
+
+    // g 前缀键：被动模式，弹窗仅作视觉引导，按键由 vim 扩展原生处理
+    const prefixG = useLeader({
+      enabled: vimEnabled,
+      triggerKey: "g",
+      timeout: menuTimeout,
+      active: vimMode !== "insert" && !leader.open && !prefixM.open,
+      dispatchAction,
+      initialItems: prefixGConfig.items,
+      passive: true,
+    });
+
+    // z 前缀键：被动模式，弹窗仅作视觉引导，按键由 vim 扩展原生处理
+    const prefixZ = useLeader({
+      enabled: vimEnabled,
+      triggerKey: "z",
+      timeout: menuTimeout,
+      active: vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open,
+      dispatchAction,
+      initialItems: prefixZConfig.items,
+      passive: true,
+    });
+
+    // t 前缀键：主动模式，Markdown 源码表格操作（对齐/插入行列/合并拆分）。
+    // 优先级排在 g/z 之后，即 normal/visual 下 Space/m/g/z 都未开启时才由 t 激活。
+    const prefixT = useLeader({
+      enabled: vimEnabled,
+      triggerKey: "t",
+      timeout: menuTimeout,
+      active: vimMode !== "insert" && !leader.open && !prefixM.open && !prefixG.open && !prefixZ.open,
+      dispatchAction,
+      initialItems: prefixTConfig.items,
+    });
+    // 显式引用：避免 TS6133 unused-var。hook 通过内部 keydown listener 生效。
+    void leader.open; void prefixM.open; void prefixG.open; void prefixZ.open; void prefixT.open;
 
     useEffect(() => {
       if (!containerRef.current) return;
@@ -470,6 +848,8 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
           ]),
           updateListener,
           EditorView.lineWrapping,
+          // Vim 扩展通过独立 Compartment 动态开关（enabled=false 时为空数组，零影响）
+          vimCompartment.of([]),
         ],
       });
 
@@ -549,11 +929,41 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
       return () => window.removeEventListener("code-theme-changed", handleCodeThemeChanged);
     }, [markdownHighlighting, codeHighlighting]);
 
+    // Vim 扩展动态注入：enabled 切换或 leaderKey 变化时通过 Compartment reconfigure
+    // enabled=false 时 reconfigure 为空数组 → 完全移除 vim 行为，零残留
+    useEffect(() => {
+      if (!viewRef.current) return;
+      viewRef.current.dispatch({
+        effects: vimCompartment.reconfigure(
+          createVimExtension({
+            enabled: vimEnabled,
+            leaderKey,
+            onModeChange,
+          })
+        ),
+      });
+    }, [vimEnabled, leaderKey, onModeChange]);
+
     return (
       <div className="editor-wrapper">
         <div className="codemirror-editor-container">
           <div ref={containerRef} className="codemirror-editor" />
         </div>
+        <LeaderMenu
+          open={leader.open || prefixM.open || prefixG.open || prefixZ.open}
+          items={
+            leader.open ? leader.items
+            : prefixM.open ? prefixM.items
+            : prefixG.open ? prefixG.items
+            : prefixZ.items
+          }
+          path={
+            leader.open ? leader.path
+            : prefixM.open ? prefixM.path
+            : prefixG.open ? prefixG.path
+            : prefixZ.path
+          }
+        />
       </div>
     );
   }

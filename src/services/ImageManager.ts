@@ -262,7 +262,7 @@ async function saveToFixedDirectory(
   uint8: Uint8Array,
   originalName: string,
   settings: ImageSettings,
-  currentFilePath: string | null,
+  _currentFilePath: string | null, // 保留参数以兼容调用方；固定目录策略统一使用 /assets/ 前缀
 ): Promise<SaveImageResult> {
   const dirPath = settings.fixedDirectory.path;
   if (!dirPath) {

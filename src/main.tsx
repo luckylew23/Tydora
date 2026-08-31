@@ -8,11 +8,28 @@ bootStamp("js_main_entry");
 
 import { ThemeProvider } from "./themes";
 import { LanguageProvider } from "./i18n/LanguageContext";
+import { VimProvider } from "./vim";
 import "./i18n"; // init i18next before first render
 bootStamp("i18n_imported_init_done");
 
 import "./themes.css";
 import "./global.css";
+import { applyMenuDensityFromStorage } from "./utils/menuDensity";
+
+// 尽早应用菜单密度，保证各独立窗口（设置/白板/图谱等）启动即生效
+applyMenuDensityFromStorage();
+window.addEventListener("storage", (e) => {
+  if (e.key === "zmd-general-settings") applyMenuDensityFromStorage();
+});
+
+// macOS Overlay 标题栏：给布局留出红绿灯空间，并隐藏自定义红黄绿按钮
+if (
+  typeof navigator !== "undefined" &&
+  (/Mac|iPhone|iPod|iPad/i.test(navigator.platform) ||
+    navigator.userAgent.includes("Mac OS"))
+) {
+  document.documentElement.classList.add("platform-macos");
+}
 
 // 开始接收 Rust boot-timing 事件（异步：不阻塞当前模块解析）
 connectRustBootTiming();
@@ -94,7 +111,11 @@ function Root() {
     bootEnd("main_window_lazy_chunks_resolve");
     return <CanvasWindow />;
   }
-  return <App initialFilePath={initialFilePath} initialVaultPath={initialVaultPath} />;
+  return (
+    <VimProvider>
+      <App initialFilePath={initialFilePath} initialVaultPath={initialVaultPath} />
+    </VimProvider>
+  );
 }
 
 bootStart("react_commit_root");

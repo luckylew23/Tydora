@@ -16,6 +16,9 @@ const TerminalView = lazy(() => import("./Terminal/TerminalView").then(m => ({ d
 import { killTerminal, unregisterTerminal } from "./Terminal/terminalApi";
 import { startTerminalSettingsSync } from "./Terminal/terminal-settings";
 import Sidebar, { VaultInfo } from "./Sidebar";
+import { FileTreeVim, useWindowNavigation, useVim } from "./vim";
+// 用 Vim HOC 包裹 Sidebar：enabled=false 时透传，零影响
+const VimSidebar = FileTreeVim(Sidebar);
 import { FilePreview } from "./components";
 import { QuickOpen } from "./components";
 import { CommandPalette } from "./components";
@@ -27,6 +30,8 @@ import { XhsPreviewPanel } from "./export/xiaohongshu";
 import { emit, listen } from "@tauri-apps/api/event";
 import { loadImageSettings, type ImageSettings } from "./services";
 import { loadEditorSettings, type EditorSettings, EDITOR_SETTINGS_KEY, SHORTCUTS_KEY, GRAPH_SETTINGS_KEY, DEFAULT_GRAPH } from "./Settings";
+import { applyFontSettings } from "./utils/systemFonts";
+import { applyMenuDensity, applyEditorSpacingFromSettings, normalizeMenuDensity } from "./utils/menuDensity";
 import { checkForUpdate, downloadAndInstall, relaunchApp, exitApp, isPortableVersion, type UpdateInfo } from "./services";
 import { LinkIndexService } from "./wikilink";
 import { WikiLinkAutocomplete } from "./wikilink";
@@ -64,7 +69,7 @@ import "./tags/Tag.css";
 import "./tags/TagAutocomplete.css";
 import "./components/FindReplaceDialog.css";
 import shortcutsConfig from "./config/shortcuts.json";
-import { matchShortcut } from "./Editor/shortcuts";
+import { matchShortcut, formatShortcutDisplay, formatShortcutKey, loadShortcuts, getShortcutKeys } from "./Editor/shortcuts";
 import { track, trackPageview, hasConsentChoice, isAnalyticsEnabled, setAnalyticsEnabled, ANALYTICS_EVENTS } from "./analytics";
 import { ConsentDialog } from "./analytics/ConsentDialog";
 
@@ -132,14 +137,16 @@ function isMarkdownFile(fileName: string): boolean {
   return ["md", "markdown", "mdx"].includes(ext);
 }
 
-// 命令面板显示快捷键：优先取 commandDisplay，其次取 editor，再取 app 配置
+// 命令面板显示快捷键：优先取 editor / app 配置，并用平台相关符号格式化（macOS：Ctrl→⌘）
 function getCommandShortcut(id: string): string | undefined {
-  const display = (shortcutsConfig.commandDisplay as Record<string, string>)[id];
-  if (display) return display;
   const item = shortcutsConfig.editor.find((s) => s.id === id);
-  if (item) return item.keys.join("+");
+  if (item?.keys?.length) return formatShortcutDisplay(item.keys);
   const appShortcut = shortcutsConfig.app[id as keyof typeof shortcutsConfig.app];
-  return appShortcut ? appShortcut.join("+") : undefined;
+  if (appShortcut) return formatShortcutDisplay(appShortcut);
+  const display = (shortcutsConfig.commandDisplay as Record<string, string>)[id];
+  if (!display) return undefined;
+  // commandDisplay 是 "Ctrl+S" 字符串，拆开后再按平台格式化
+  return formatShortcutDisplay(display.split("+"));
 }
 
 // ── N 窗格“共享缓冲” + 树形嵌套分屏模型 ──
@@ -316,6 +323,36 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
 
   const { theme } = useTheme();
   const { t } = useTranslation();
+  // Vim 上下文：用于在全局快捷键（Ctrl+E / Ctrl+H / Ctrl+F / Ctrl+W 等）中判断是否需要让渡给 vim 模态
+  const { enabled: vimEnabled, mode: vimMode } = useVim();
+  // useRef 存 vim 状态，给 window 级 keydown listener 读取（避免频繁重新注册 listener）
+  const vimStateRef = useRef({ enabled: false, mode: "normal" as "normal" | "insert" | "visual" });
+  vimStateRef.current.enabled = vimEnabled;
+  vimStateRef.current.mode = vimMode;
+  /**
+   * 在 Vim 开启且当前 vim 模态不是 insert 时，若焦点在编辑器（ProseMirror/CodeMirror）内
+   * 或在 vim 管理的富文本节点内，让快捷键让渡给 vim 扩展。
+   * 返回 true 表示当前 handler 应该直接退出，不要处理快捷键。
+   */
+  const vimShouldTakeOver = useCallback((e: KeyboardEvent): boolean => {
+    if (!vimStateRef.current.enabled) return false;
+    if (vimStateRef.current.mode === "insert") return false;
+    const target = e.target as HTMLElement | null;
+    if (!target) return false;
+    // 输入框：不接管（vim 不在这些地方运行）
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return false;
+    // 编辑器（ProseMirror cm-editor / CodeMirror .cm-editor / vim-prose 标记 / TipTap .tiptap-editor）
+    if (
+      target.closest(".cm-editor") ||
+      target.closest('[data-pm-focus="true"]') ||
+      target.closest(".ProseMirror") ||
+      target.closest(".tiptap-editor") ||
+      target.closest("[data-vim-mode]")
+    ) {
+      return true;
+    }
+    return false;
+  }, []);
   const [saveStatus, setSaveStatus] = useState<"idle" | "modified" | "saved">("idle");
   const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => loadEditorSettings());
   // ── N 窗格共享缓冲 + 树形嵌套布局 ──
@@ -391,6 +428,12 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const [typewriterMode, setTypewriterMode] = useState(() => s.typewriterMode ?? false);
   const [previewMaxWidth, setPreviewMaxWidth] = useState(() => s.previewMaxWidth ?? 800);
   const [lineHeight, setLineHeight] = useState(() => s.lineHeight ?? 1.6);
+  const [paragraphSpacing, setParagraphSpacing] = useState(() =>
+    typeof s.paragraphSpacing === "number" ? s.paragraphSpacing : 0.5,
+  );
+  const [codeLineHeight, setCodeLineHeight] = useState(() =>
+    typeof s.codeLineHeight === "number" ? s.codeLineHeight : 1.5,
+  );
   const [irLineNumbers, setIrLineNumbers] = useState(() => s.irLineNumbers ?? true);
   // 双击 .md 文件外部打开时，是否展开侧栏并自动切换到大纲视图（默认开启）
   const [expandOutlineOnOpen, setExpandOutlineOnOpen] = useState(() => s.expandOutlineOnOpen ?? true);
@@ -450,51 +493,47 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     const applySettings = () => {
       try {
         const raw = localStorage.getItem("zmd-general-settings");
-        if (raw) {
-          const settings = JSON.parse(raw);
-          if (settings.editorFont) {
-            document.documentElement.style.setProperty("--editor-font", settings.editorFont);
-            // 按需加载 LXGW 系列字体
-            if (settings.editorFont.includes("LXGW WenKai") && !document.getElementById("lxgw-wenkai-font")) {
-              const link = document.createElement("link");
-              link.id = "lxgw-wenkai-font";
-              link.rel = "stylesheet";
-              link.href = "https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css";
-              document.head.appendChild(link);
-            }
-            if (settings.editorFont.includes("LXGW XinXiHei") && !document.getElementById("lxgw-xinxihei-font")) {
-              const link = document.createElement("link");
-              link.id = "lxgw-xinxihei-font";
-              link.rel = "stylesheet";
-              link.href = "https://cdn.jsdelivr.net/npm/lxgw-xinxihei-webfont@1.7.0/style.css";
-              document.head.appendChild(link);
-            }
-          }
-          if (settings.fontSize) {
-            document.documentElement.style.setProperty("--editor-font-size", settings.fontSize + "px");
-          }
-          if (typeof settings.autoHideTopbar === 'boolean') {
-            setAutoHideTopbar(settings.autoHideTopbar);
-          }
-          if (typeof settings.autoHideTopbarOnCollapse === 'boolean') {
-            setAutoHideTopbarOnCollapse(settings.autoHideTopbarOnCollapse);
-          }
-          if (typeof settings.typewriterMode === 'boolean') {
-            setTypewriterMode(settings.typewriterMode);
-          }
-          if (typeof settings.previewMaxWidth === 'number') {
-            setPreviewMaxWidth(settings.previewMaxWidth);
-          }
-          if (typeof settings.lineHeight === 'number') {
-            setLineHeight(settings.lineHeight);
-          }
-          if (typeof settings.irLineNumbers === 'boolean') {
-            setIrLineNumbers(settings.irLineNumbers);
-          }
-          if (typeof settings.expandOutlineOnOpen === 'boolean') {
-            setExpandOutlineOnOpen(settings.expandOutlineOnOpen);
-          }
+        const settings = raw ? JSON.parse(raw) : {};
+        applyFontSettings({
+          editorFont: settings.editorFont ?? "system",
+          codeFont: settings.codeFont ?? "system",
+          codeFontSize:
+            typeof settings.codeFontSize === "number" ? settings.codeFontSize : 14,
+        });
+        if (settings.fontSize) {
+          document.documentElement.style.setProperty("--editor-font-size", settings.fontSize + "px");
         }
+        if (typeof settings.autoHideTopbar === 'boolean') {
+          setAutoHideTopbar(settings.autoHideTopbar);
+        }
+        if (typeof settings.autoHideTopbarOnCollapse === 'boolean') {
+          setAutoHideTopbarOnCollapse(settings.autoHideTopbarOnCollapse);
+        }
+        if (typeof settings.typewriterMode === 'boolean') {
+          setTypewriterMode(settings.typewriterMode);
+        }
+        if (typeof settings.previewMaxWidth === 'number') {
+          setPreviewMaxWidth(settings.previewMaxWidth);
+        }
+        if (typeof settings.lineHeight === 'number') {
+          setLineHeight(settings.lineHeight);
+        }
+        if (typeof settings.paragraphSpacing === "number") {
+          setParagraphSpacing(Math.min(2, Math.max(0, settings.paragraphSpacing)));
+        }
+        if (typeof settings.codeLineHeight === "number") {
+          setCodeLineHeight(Math.min(2.4, Math.max(1.2, settings.codeLineHeight)));
+        }
+        applyEditorSpacingFromSettings(settings);
+        if (typeof settings.irLineNumbers === 'boolean') {
+          setIrLineNumbers(settings.irLineNumbers);
+        }
+        if (typeof settings.expandOutlineOnOpen === 'boolean') {
+          setExpandOutlineOnOpen(settings.expandOutlineOnOpen);
+        }
+        document.documentElement.dataset.codeBlockToolbar =
+          settings.codeBlockToolbarStyle === "classic" ? "classic" : "minimal";
+        applyMenuDensity(normalizeMenuDensity(settings.menuDensity));
       } catch {}
     };
     applySettings();
@@ -515,34 +554,99 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
 
   // Ctrl + 滚轮：在编辑区调整字号（范围与设置面板一致 10-24px，持久化到 zmd-general-settings）
   useEffect(() => {
-    const container = document.querySelector<HTMLElement>(".editor-container");
-    if (!container) return;
-    // React 的 onWheel 是被动监听、无法 preventDefault，这里用原生非被动监听器
-    // 避免触发 Chromium 默认的 Ctrl+滚轮页面缩放
+    // 收集事件目标到 .editor-container 之间所有可滚动祖先的当前位置
+    const collectScrollLocks = (target: HTMLElement | null) => {
+      const locks: { el: HTMLElement; top: number; left: number; height: number }[] = [];
+      let el: HTMLElement | null = target;
+      while (el) {
+        if (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) {
+          locks.push({
+            el,
+            top: el.scrollTop,
+            left: el.scrollLeft,
+            height: el.scrollHeight,
+          });
+        }
+        if (el.classList.contains("editor-container")) break;
+        el = el.parentElement;
+      }
+      return locks;
+    };
+
+    const restoreScrollLocks = (
+      locks: { el: HTMLElement; top: number; left: number; height: number }[],
+      proportional: boolean,
+    ) => {
+      for (const lock of locks) {
+        if (proportional && lock.height > 0) {
+          const ratio = lock.top / lock.height;
+          lock.el.scrollTop = ratio * lock.el.scrollHeight;
+        } else {
+          lock.el.scrollTop = lock.top;
+        }
+        lock.el.scrollLeft = lock.left;
+      }
+    };
+
+    // 挂在 document 捕获阶段，确保先于 React Flow / 编辑器滚动处理；
+    // 字号变更后还会按比例恢复 scrollTop，避免重排造成“还在滚动”的观感。
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.altKey || e.shiftKey) return;
-      // 滚轮落在终端面板内时，交给终端自己的缩放处理，避免“聚焦终端却连编辑器一起缩放”。
       const targetEl = e.target as HTMLElement | null;
-      if (targetEl && targetEl.closest(".terminal-pane")) return;
+      if (!targetEl) return;
+      const editorRoot = targetEl.closest(".editor-container");
+      if (!editorRoot) return;
+      if (targetEl.closest(".terminal-pane")) return;
+
       e.preventDefault();
+      e.stopImmediatePropagation();
+
+      const locks = collectScrollLocks(targetEl);
+      // 冻结 React Flow 视口（画布缩放用 transform，不是 scrollTop）
+      const rfViewport = editorRoot.querySelector(".react-flow__viewport") as HTMLElement | null;
+      const rfTransform = rfViewport?.style.transform ?? null;
+
       const dir = e.deltaY < 0 ? 1 : -1; // 向上滚动放大，向下滚动缩小
+      let changed = false;
       try {
-        // 从 localStorage 读取当前字号并更新（generalSettings 状态在设置窗口 Settings.tsx 中管理）
         const raw = localStorage.getItem("zmd-general-settings");
         const settings = raw ? JSON.parse(raw) : {};
         const current = typeof settings.fontSize === "number" ? settings.fontSize : 16;
+        const currentMono =
+          typeof settings.codeFontSize === "number" ? settings.codeFontSize : 14;
         const next = Math.min(24, Math.max(10, Math.round(current) + dir));
-        if (next === current) return;
-        settings.fontSize = next;
-        localStorage.setItem("zmd-general-settings", JSON.stringify(settings));
-        document.documentElement.style.setProperty("--editor-font-size", next + "px");
-        // 右上角显示当前字号，停止滚动 1.5s 后自动消失
-        showFontSizeToast(next);
+        const nextMono = Math.min(24, Math.max(10, Math.round(currentMono) + dir));
+        if (next !== current || nextMono !== currentMono) {
+          settings.fontSize = next;
+          settings.codeFontSize = nextMono;
+          localStorage.setItem("zmd-general-settings", JSON.stringify(settings));
+          document.documentElement.style.setProperty("--editor-font-size", next + "px");
+          document.documentElement.style.setProperty("--font-mono-size", nextMono + "px");
+          showFontSizeToast(next);
+          changed = true;
+        }
       } catch {}
+
+      // 先立刻锁回原位置，阻止本轮滚轮改动 scrollTop / 画布 transform
+      restoreScrollLocks(locks, false);
+      if (rfViewport && rfTransform != null) {
+        rfViewport.style.transform = rfTransform;
+      }
+
+      // 字号变更引发重排后，按文档比例恢复，避免内容“跳着滚”
+      if (changed) {
+        requestAnimationFrame(() => {
+          restoreScrollLocks(locks, true);
+          if (rfViewport && rfTransform != null) {
+            rfViewport.style.transform = rfTransform;
+          }
+        });
+      }
     };
-    container.addEventListener("wheel", onWheel, { passive: false });
-    return () => container.removeEventListener("wheel", onWheel);
+
+    document.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => document.removeEventListener("wheel", onWheel, { capture: true });
   }, []);
 
   // 卸载时清理字号提示的自动消失定时器
@@ -996,6 +1100,57 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   useEffect(() => { notifyResize(); }, [sidebarOpen]);
   useEffect(() => { notifyResize(); }, [sidebarWidth]);
 
+  // 激活窗格变化后自动聚焦该窗格的编辑器（统一处理分屏/关闭/导航/点击等所有场景）。
+  // —— 实现思路：不用 React 的 handle，直接模拟 Tab 键的原生焦点遍历：
+  //    在 data-pane-id 指向的容器里找 contenteditable / textarea 等可聚焦 DOM 元素，
+  //    调用原生 .focus()。这样即使 handle 因组件卸载重挂临时丢失、或聚焦回调没触发，
+  //    只要 Tab 能聚焦的 DOM 一出现，就能立刻把焦点落上去。
+  // —— 用 requestAnimationFrame 逐帧重试：关闭分屏后布局会压缩重绘，
+  //    编辑器组件可能短暂卸载再重挂载，最多重试 30 帧（≈500ms）兜底。
+  useEffect(() => {
+    const paneId = activePaneId;
+    if (!paneId) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 30;
+
+    // 按优先级查找可聚焦 DOM：和 Tab 遍历命中的元素一致
+    // 1. TipTap: ProseMirror contenteditable
+    // 2. CodeMirror: .cm-content / textarea
+    // 3. xterm 终端: .xterm textarea
+    // 4. 兜底: 任意 contenteditable=true / textarea / input
+    const focusableSelectors = [
+      '[data-pane-id="' + paneId + '"] .ProseMirror[contenteditable="true"]',
+      '[data-pane-id="' + paneId + '"] .cm-content',
+      '[data-pane-id="' + paneId + '"] .cm-editor',
+      '[data-pane-id="' + paneId + '"] .xterm textarea',
+      '[data-pane-id="' + paneId + '"] .terminal-container textarea',
+      '[data-pane-id="' + paneId + '"] [contenteditable="true"]',
+      '[data-pane-id="' + paneId + '"] textarea',
+      '[data-pane-id="' + paneId + '"] input',
+    ];
+
+    const tryFocus = () => {
+      if (cancelled) return;
+      for (const sel of focusableSelectors) {
+        const el = document.querySelector<HTMLElement>(sel);
+        if (el && el.isConnected) {
+          // 先让浏览器跑默认 scroll，focus 后同步 editorHandleRef（不影响 DOM 聚焦）
+          el.focus({ preventScroll: false });
+          // 同步 React 侧的 editorHandleRef（不强制，handle 在不在都不影响 DOM 聚焦）
+          const h = paneHandlesRef.current[paneId];
+          if (h) editorHandleRef.current = h;
+          return;
+        }
+      }
+      attempts++;
+      if (attempts < maxAttempts) requestAnimationFrame(tryFocus);
+    };
+    requestAnimationFrame(tryFocus);
+    return () => { cancelled = true; };
+  }, [activePaneId]);
+
   // ── 窗口位置/大小记忆 ──
   const saveWindowStateRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
@@ -1238,6 +1393,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // Ctrl+O 快速打开文件
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 冲突：Ctrl+O=光标回到跳转列表上一个位置
+      if (vimShouldTakeOver(e) && (e.ctrlKey || e.metaKey) && e.key === "o") return;
       if ((e.ctrlKey || e.metaKey) && e.key === "o") {
         e.preventDefault();
         if (activeVaultIndex >= 0) {
@@ -1248,11 +1405,13 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeVaultIndex]);
+  }, [activeVaultIndex, vimShouldTakeOver]);
 
   // Ctrl+P 命令面板
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 冲突：Ctrl+P=向上一行（等同 k，cm-vim 映射）/ 打印键位兼容，normal 态让渡
+      if (vimShouldTakeOver(e) && (e.ctrlKey || e.metaKey) && e.key === "p") return;
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
         e.preventDefault();
         setQuickOpenOpen(false);
@@ -1261,7 +1420,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [vimShouldTakeOver]);
 
   // 读取图谱设置
   const getGraphSettings = useCallback(() => {
@@ -1276,6 +1435,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // Ctrl+G 知识图谱
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 冲突：Ctrl+G=显示文件信息
+      if (vimShouldTakeOver(e) && (e.ctrlKey || e.metaKey) && e.key === "g") return;
       if ((e.ctrlKey || e.metaKey) && e.key === "g") {
         e.preventDefault();
         if (getGraphSettings().openInNewWindow) {
@@ -1287,7 +1448,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [getGraphSettings]);
+  }, [vimShouldTakeOver]);
 
   // ── Vault callbacks ──
 
@@ -1477,11 +1638,16 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         if (editorPane) {
           targetPaneId = editorPane.id;
           targetBufferId = editorPane.bufferId;
+          setActivePaneId(editorPane.id);
         } else {
           const newEditorPane: Pane = { id: pid(), kind: "editor", bufferId: buffersRef.current[0]?.id, mode: editorSettings.defaultMode };
           targetBufferId = newEditorPane.bufferId;
           spawnPaneBeside(activePaneObj.id, newEditorPane, "lr");
           targetPaneId = newEditorPane.id;
+          setActivePaneId(newEditorPane.id);
+          setTimeout(() => {
+            paneHandlesRef.current[newEditorPane.id]?.focus();
+          }, 60);
         }
       }
       // 检查目标编辑器窗格的 buffer 是否被多个窗格共享（分屏同步状态）
@@ -1764,6 +1930,12 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       const nextTree = replaceNodeByPath(splitLayoutRef.current, found.path, replacement);
       setSplitLayout(nextTree);
     }
+    // 分屏后默认聚焦到新分屏的窗格
+    setActivePaneId(newPane.id);
+    // 延迟聚焦新窗格的编辑器，等待挂载
+    setTimeout(() => {
+      paneHandlesRef.current[newPane.id]?.focus();
+    }, 60);
   }, [defaultCwd, makeTerminalPane, spawnPaneBeside]);
 
   // 终端快捷键（Ctrl+`）：toggle —— 无终端则新建；已有终端且当前不在终端则聚焦最近终端；已在终端则无操作。
@@ -1939,6 +2111,10 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     if (activePaneIdRef.current === paneId && adjacentPaneId) {
       setActivePaneId(adjacentPaneId);
       editorHandleRef.current = paneHandlesRef.current[adjacentPaneId] ?? null;
+      // 延迟聚焦相邻窗格的编辑器/终端，等待布局重新挂载
+      setTimeout(() => {
+        paneHandlesRef.current[adjacentPaneId]?.focus();
+      }, 60);
     }
     // 清理孤儿缓冲：基于同步的 panesRef + remainingPaneIds 先计算仍被引用的 bufferId，
     // 再用函数式 setBuffers 基于最新 panes 二次确认，避免因 setState 时序错删。
@@ -2079,6 +2255,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
             typewriterMode={typewriterMode}
             previewMaxWidth={previewMaxWidth}
             lineHeight={lineHeight}
+            paragraphSpacing={paragraphSpacing}
+            codeLineHeight={codeLineHeight}
             irLineNumbers={irLineNumbers}
             editorSettings={editorSettings}
             imageSettings={imageSettings}
@@ -2275,6 +2453,11 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 关闭窗口 / 查找 / 替换快捷键（配置见 src/config/shortcuts.json 的 app）
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Vim 语义冲突：Ctrl+W=删除前一个 word（insert）/ 操作符前缀（normal 窗格操作）
+      // Ctrl+F=整页向下；Ctrl+H=退格（insert）/ 光标左（normal）
+      if (vimShouldTakeOver(e) && matchShortcut(e, shortcutsConfig.app["close-window"])) return;
+      if (vimShouldTakeOver(e) && matchShortcut(e, shortcutsConfig.app["find"])) return;
+      if (vimShouldTakeOver(e) && matchShortcut(e, shortcutsConfig.app["replace"])) return;
       if (matchShortcut(e, shortcutsConfig.app["close-window"])) {
         e.preventDefault();
         const win = getCurrentWindow();
@@ -2302,7 +2485,30 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleClose, closePane]);
+  }, [handleClose, closePane, vimShouldTakeOver]);
+
+  // Ctrl+,（macOS：⌘+,）切换设置窗口；可在设置-快捷键中自定义
+  useEffect(() => {
+    const handler = async (e: KeyboardEvent) => {
+      const keys = getShortcutKeys(loadShortcuts(), "open-settings");
+      const fallback = shortcutsConfig.app["open-settings"] ?? ["Ctrl", ","];
+      if (!matchShortcut(e, keys.length ? keys : fallback)) return;
+      e.preventDefault();
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const existing = await WebviewWindow.getByLabel("settings");
+        if (existing) {
+          await existing.close();
+        } else {
+          await invoke("open_settings_window");
+        }
+      } catch {
+        invoke("open_settings_window").catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const toggleTypewriterMode = useCallback(() => {
     setTypewriterMode((prev: boolean) => !prev);
@@ -2371,6 +2577,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       } catch {}
       const key = shortcutKeys.join("+").toLowerCase();
       const eventKey = `${e.ctrlKey || e.metaKey ? "ctrl+" : ""}${e.altKey ? "alt+" : ""}${e.shiftKey ? "shift+" : ""}${e.key.toLowerCase()}`;
+      // Vim 冲突：Ctrl+E=向下滚动一行（vim normal）
+      if (eventKey === key && vimShouldTakeOver(e)) return;
       if (eventKey === key) {
         e.preventDefault();
         editorHandleRef.current?.executeCommand("inline-code");
@@ -2378,7 +2586,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () => window.removeEventListener("keydown", handler, { capture: true });
-  }, []);
+  }, [vimShouldTakeOver]);
 
   // 打开思维导图快捷键（配置见 src/config/shortcuts.json 的 app.open-mindmap）
   useEffect(() => {
@@ -2419,6 +2627,97 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [handleSplit, handleToggleTerminal, fileName, isCurrentFileMarkdown, isActiveTerminal]);
+
+  // ── Vim 窗格导航 ──────────────────────────────────────────────────
+  // 焦点切换：在扁平 pane 列表中按方向移动
+  const focusPane = useCallback((dir: "left" | "down" | "up" | "right") => {
+    const ids = collectPaneIds(splitLayoutRef.current);
+    const idx = ids.indexOf(activePaneIdRef.current);
+    if (idx < 0 || ids.length <= 1) return;
+    // left/up → 前一个，right/down → 后一个
+    const delta = dir === "left" || dir === "up" ? -1 : 1;
+    const next = (idx + delta + ids.length) % ids.length;
+    setActivePaneId(ids[next]);
+    editorHandleRef.current = paneHandlesRef.current[ids[next]] ?? null;
+  }, []);
+
+  // 移动当前窗格到父组的边缘
+  const movePaneToEdge = useCallback((dir: "left" | "down" | "up" | "right") => {
+    const activeId = activePaneIdRef.current;
+    const found = findPaneInTree(splitLayoutRef.current, activeId);
+    if (!found || found.path.length === 0) return; // 根叶子，无法移动
+
+    const lastStep = found.path[found.path.length - 1];
+    const parent = lastStep.group;
+    const childIdx = lastStep.childIndex;
+
+    // left/up → 移到首，right/down → 移到末
+    const targetIdx = dir === "left" || dir === "up" ? 0 : parent.children.length - 1;
+    if (childIdx === targetIdx) return; // 已在目标位置
+
+    // 不可变地重排 children
+    const newChildren = [...parent.children];
+    const [moved] = newChildren.splice(childIdx, 1);
+    newChildren.splice(targetIdx, 0, moved);
+
+    // 用 path 到父组的路径替换父组（path.slice(0,-1) 为空时 replaceNodeByPath 直接返回 replacement）
+    const newRoot = replaceNodeByPath(
+      splitLayoutRef.current,
+      found.path.slice(0, -1),
+      { ...parent, children: newChildren }
+    );
+    setSplitLayout(newRoot);
+  }, []);
+
+  // Vim Leader 菜单的 app.* 动作分发：监听全局 vim-app-action 事件
+  // 用 ref 持有最新 handler，避免每次依赖变化重新注册监听
+  const vimAppHandlersRef = useRef<Record<string, () => void>>({});
+  vimAppHandlersRef.current = {
+    "save": handleSave,
+    "toggle-sidebar": handleSidebarToggle,
+    "toggle-mode": cycleMode,
+    "command-palette": () => setCommandPaletteOpen(true),
+    "quick-open": () => { if (activeVaultIndex >= 0) setQuickOpenOpen(true); },
+    "find": () => {
+      // 触发编辑器内查找（模拟 Ctrl+F）
+      const editor = document.querySelector(".codemirror-editor") as HTMLElement | null
+        || document.querySelector(".tiptap-editor .ProseMirror") as HTMLElement | null;
+      editor?.focus();
+      requestAnimationFrame(() => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+      });
+    },
+    "global-search": () => {
+      // 打开侧栏并切换到搜索 tab
+      if (!sidebarOpen) handleSidebarToggle();
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent("vim-sidebar-tab", { detail: { tab: "search" } }));
+      });
+    },
+    "split-horizontal": () => { if (fileName && isCurrentFileMarkdown) handleSplit("lr"); else if (isActiveTerminal) handleSplit("lr"); },
+    "split-vertical": () => { if (fileName && isCurrentFileMarkdown) handleSplit("tb"); else if (isActiveTerminal) handleSplit("tb"); },
+    "close-pane": () => closePane(activePaneIdRef.current),
+    "focus-left": () => focusPane("left"),
+    "focus-down": () => focusPane("down"),
+    "focus-up": () => focusPane("up"),
+    "focus-right": () => focusPane("right"),
+    "move-pane-left": () => movePaneToEdge("left"),
+    "move-pane-down": () => movePaneToEdge("down"),
+    "move-pane-up": () => movePaneToEdge("up"),
+    "move-pane-right": () => movePaneToEdge("right"),
+  };
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { action } = (e as CustomEvent).detail;
+      vimAppHandlersRef.current[action]?.();
+    };
+    window.addEventListener("vim-app-action", handler);
+    return () => window.removeEventListener("vim-app-action", handler);
+  }, []);
+
+  // Vim 窗口导航：Ctrl+w h/j/k/l 切换焦点
+  useWindowNavigation();
 
   // 监听 wikilink 点击
   useEffect(() => {
@@ -2912,7 +3211,16 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     { id: "close", label: t("app.command.labels.closeWindow"), category: t("app.command.categories.window"), action: handleClose },
 
     // 设置
-    { id: "open-settings", label: t("app.command.labels.openSettings"), category: t("app.command.categories.settings"), action: () => invoke("open_settings_window") },
+    { id: "open-settings", label: t("app.command.labels.openSettings"), category: t("app.command.categories.settings"), shortcut: getCommandShortcut("open-settings"), action: async () => {
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const existing = await WebviewWindow.getByLabel("settings");
+        if (existing) await existing.close();
+        else await invoke("open_settings_window");
+      } catch {
+        invoke("open_settings_window");
+      }
+    } },
     { id: "settings-general", label: t("app.command.labels.generalSettings"), category: t("app.command.categories.settings"), aliases: t("app.command.aliases.generalSettings").split(", "), action: () => { localStorage.setItem("zmd-settings-initial-tab", "general"); invoke("open_settings_window"); } },
     { id: "settings-theme", label: t("app.command.labels.themeSettings"), category: t("app.command.categories.settings"), aliases: t("app.command.aliases.themeSettings").split(", "), action: () => { localStorage.setItem("zmd-settings-initial-tab", "theme"); invoke("open_settings_window"); } },
     { id: "settings-shortcuts", label: t("app.command.labels.shortcutSettings"), category: t("app.command.categories.settings"), aliases: t("app.command.aliases.shortcutSettings").split(", "), action: () => { localStorage.setItem("zmd-settings-initial-tab", "shortcuts"); invoke("open_settings_window"); } },
@@ -2928,7 +3236,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       {/* 主内容区：左侧栏 + 编辑区域 */}
       <div className="main-container">
         {/* 左侧栏 */}
-        <Sidebar
+        <VimSidebar
           vaults={vaults}
           activeVaultIndex={activeVaultIndex}
           currentFilePath={fileName}
@@ -2950,11 +3258,11 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         />
 
         {/* 编辑区域 */}
-        <main className={`editor-container${(autoHideTopbar || (!sidebarOpen && autoHideTopbarOnCollapse)) ? ' sidebar-collapsed' : ''}`}>
+        <main className={`editor-container${!sidebarOpen ? " sidebar-is-closed" : ""}${(autoHideTopbar || (!sidebarOpen && autoHideTopbarOnCollapse)) ? " sidebar-collapsed" : ""}`}>
           <div className="editor-topbar-trigger" />
           {/* 顶部透明栏 */}
-          <div className="editor-topbar">
-            <div className="editor-topbar-left">
+          <div className="editor-topbar" data-tauri-drag-region="deep">
+            <div className="editor-topbar-left" data-tauri-drag-region="false">
               <button className="sidebar-toggle-btn" onClick={handleSidebarToggle} title={sidebarOpen ? t("app.toolbar.collapseSidebar") : t("app.toolbar.expandSidebar")}>
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
                   {sidebarOpen ? (
@@ -2998,7 +3306,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
               {displayedTitle}
               <span className={`traffic-light traffic-light--${displayedFileName ? displayedSaveStatus : "idle"}`} />
             </span>
-            <div className="window-controls">
+            <div className="window-controls" data-tauri-drag-region="false">
               {pinnedItems.mindmap && (
                 <button className="window-control-btn" title={t("app.toolbar.mindmap")} onClick={() => {
                   localStorage.setItem("zmd-mindmap-mode", "document");
@@ -3073,7 +3381,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </svg>
                 </button>
               )}
-              <div className="editor-topbar-more-wrapper" ref={moreMenuRef}>
+              <div className="editor-topbar-more-wrapper" ref={moreMenuRef} data-tauri-drag-region="false">
                 <button className="window-control-btn" title={t("app.toolbar.more")} onClick={() => setMoreMenuOpen((v) => !v)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="5" cy="12" r="2" />
@@ -3358,18 +3666,18 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </div>
                 )}
               </div>
-              <div className="window-controls-divider" />
-              <button className="window-control-btn" onClick={handleMinimize} title={t("app.toolbar.minimize")}>
+              <div className="window-controls-divider window-controls-native" />
+              <button className="window-control-btn window-controls-native" onClick={handleMinimize} title={t("app.toolbar.minimize")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
                   <line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" strokeWidth="1.2" />
                 </svg>
               </button>
-              <button className="window-control-btn" onClick={handleToggleMaximize} title={t("app.toolbar.maximize")}>
+              <button className="window-control-btn window-controls-native" onClick={handleToggleMaximize} title={t("app.toolbar.maximize")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
                   <rect x="1" y="1" width="8" height="8" rx="0.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
                 </svg>
               </button>
-              <button className="window-control-btn window-control-close" onClick={handleClose} title={t("app.toolbar.close")}>
+              <button className="window-control-btn window-control-close window-controls-native" onClick={handleClose} title={t("app.toolbar.close")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
                   <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1.2" />
                   <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1.2" />
@@ -3431,13 +3739,13 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                 <div className="welcome-hint">
                   <div className="welcome-hint-item">
                     <span>{t("app.welcome.openFile")}</span>
-                    <kbd>Ctrl</kbd>
+                    <kbd>{formatShortcutKey("Ctrl")}</kbd>
                     <span>+</span>
                     <kbd>O</kbd>
                   </div>
                   <div className="welcome-hint-item">
                     <span>{t("app.welcome.commandPalette")}</span>
-                    <kbd>Ctrl</kbd>
+                    <kbd>{formatShortcutKey("Ctrl")}</kbd>
                     <span>+</span>
                     <kbd>P</kbd>
                   </div>
@@ -3453,7 +3761,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                     return (
                       <div
                         key={`leaf-${keySeed}-${node.paneId}`}
-                        className="editor-split-pane"
+                        className={`editor-split-pane${pane.id === activePaneId ? " is-active" : ""}`}
+                        data-pane-id={pane.id}
                         style={{ flex: `${node.flex ?? 1} 1 0` }}
                         onFocus={() => {
                           setActivePaneId(pane.id);

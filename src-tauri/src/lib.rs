@@ -28,6 +28,17 @@ fn emit_boot_timing<R: tauri::Runtime, M: tauri::Manager<R> + tauri::Emitter<R>>
 }
 
 mod commands;
+
+#[cfg(target_os = "macos")]
+mod macos_chrome;
+
+/// macOS：应用原生 CALayer 圆角。其他平台无操作。
+fn finish_macos_window(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    macos_chrome::finish_macos_window(window);
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+}
 use commands::watcher_commands::{watch_vault, unwatch_vault, WatcherState};
 use commands::remote_image::{fetch_remote_image, HttpClientState};
 use commands::proxy::{start_proxy_server, fetch_page_title};
@@ -35,6 +46,7 @@ use commands::file_commands::list_dir_with_meta;
 use commands::terminal_commands::{
     spawn_terminal, write_terminal, resize_terminal, kill_terminal, TerminalManager,
 };
+use commands::font_commands::list_system_fonts;
 
 struct PreviewServer(Mutex<Option<std::process::Child>>);
 
@@ -160,11 +172,32 @@ fn get_app_version(app: tauri::AppHandle) -> String {
 /// 所有子窗口统一的背景色：纯白不透明。
 /// 原因：Windows WebView2 在首帧（HTML/CSS 真正 paint 之前）会先用"窗口背景色"
 /// 填充整个客户区。如果不设置，默认是黑色，就会出现用户截图里的"右下黑边"
-/// （窗口先出现 → WebView 还没 paint → 用户看到一片黑色填充区域）。
-fn white_window_bg() -> tauri::utils::config::Color {
-    // Color 是元组结构体 Color(pub u8, pub u8, pub u8, pub u8) = (R, G, B, A)
-    tauri::utils::config::Color(255, 255, 255, 255)
+/// 无边框窗口背景：透明，配合 CSS border-radius 实现圆角（macOS 需 macOSPrivateApi）
+fn window_bg() -> tauri::utils::config::Color {
+    tauri::utils::config::Color(0, 0, 0, 0)
 }
+
+/// macOS Overlay 标题栏（隐藏标题文字 + Overlay + 红绿灯位置）。
+/// `hidden_title` / `title_bar_style` / `traffic_light_position` 均为 macOS-only API。
+trait MacOsChrome<'a, R: tauri::Runtime, M: Manager<R>> {
+    fn macos_overlay_chrome(self) -> WebviewWindowBuilder<'a, R, M>;
+}
+
+impl<'a, R: tauri::Runtime, M: Manager<R>> MacOsChrome<'a, R, M> for WebviewWindowBuilder<'a, R, M> {
+    fn macos_overlay_chrome(self) -> WebviewWindowBuilder<'a, R, M> {
+        #[cfg(target_os = "macos")]
+        {
+            self.hidden_title(true)
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .traffic_light_position(tauri::LogicalPosition::new(14.0, 11.0))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self
+        }
+    }
+}
+
 
 /// 打开设置窗口
 #[tauri::command]
@@ -177,7 +210,7 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let settings_window = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         &app,
         label,
         tauri::WebviewUrl::App("index.html?window=settings".into()),
@@ -185,14 +218,21 @@ async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     .title("设置")
     .inner_size(800.0, 600.0)
     .min_inner_size(600.0, 400.0)
+    .center()
     .visible(false)
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg())
-    .build();
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg());
+
+    let settings_window = builder.build();
 
     match settings_window {
-        Ok(_) => Ok(()),
+        Ok(win) => {
+            finish_macos_window(&win);
+            Ok(())
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -236,9 +276,11 @@ fn spawn_editor_window(
     .title(&title)
     .inner_size(width.unwrap_or(1200.0), height.unwrap_or(800.0))
     .min_inner_size(600.0, 400.0)
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg());
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg());
 
     // 有上次保存的位置则直接在该位置打开（避免先居中再移动的跳动），否则居中
     // 前端保存的为逻辑坐标（outerPosition / scaleFactor），position 直接接受逻辑坐标
@@ -250,7 +292,8 @@ fn spawn_editor_window(
     let window = builder.build();
 
     match window {
-        Ok(_) => {
+        Ok(win) => {
+            finish_macos_window(&win);
             let app_handle = app.clone();
             let fp = file_path.to_string();
             let lbl = label.clone();
@@ -305,13 +348,18 @@ async fn open_mindmap_window(
     .inner_size(900.0, 600.0)
     .min_inner_size(400.0, 300.0)
     .visible(false)
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg())
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg())
     .build();
 
     match window {
-        Ok(_win) => Ok(()),
+        Ok(win) => {
+            finish_macos_window(&win);
+            Ok(())
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -339,13 +387,18 @@ async fn open_graph_window(
     .inner_size(1000.0, 700.0)
     .min_inner_size(500.0, 400.0)
     .visible(false)
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg())
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg())
     .build();
 
     match window {
-        Ok(_win) => Ok(()),
+        Ok(win) => {
+            finish_macos_window(&win);
+            Ok(())
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -379,13 +432,18 @@ async fn open_canvas_window(
     .inner_size(1200.0, 800.0)
     .min_inner_size(500.0, 400.0)
     .visible(false)
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg())
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg())
     .build();
 
     match window {
-        Ok(_win) => Ok(()),
+        Ok(win) => {
+            finish_macos_window(&win);
+            Ok(())
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -426,13 +484,16 @@ async fn open_canvas_in_new_window(
     .inner_size(width.unwrap_or(1200.0), height.unwrap_or(800.0))
     .min_inner_size(500.0, 400.0)
     .center()
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg())
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg())
     .build();
 
     match window {
-        Ok(_) => {
+        Ok(win) => {
+            finish_macos_window(&win);
             let app_handle = app.clone();
             let cp = canvas_path.clone();
             let lbl = label.clone();
@@ -471,13 +532,18 @@ async fn open_vault_manager_window(app: tauri::AppHandle) -> Result<(), String> 
     .min_inner_size(700.0, 500.0)
     .center()
     .visible(false)
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg())
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg())
     .build();
 
     match window {
-        Ok(_) => Ok(()),
+        Ok(win) => {
+            finish_macos_window(&win);
+            Ok(())
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -536,13 +602,18 @@ async fn open_vault_in_new_window(app: tauri::AppHandle, vault_path: String, wid
     .inner_size(width, height)
     .min_inner_size(600.0, 400.0)
     .center()
-    .decorations(false)
-    .resizable(true)
-    .background_color(white_window_bg())
+    .decorations(cfg!(target_os = "macos"))
+    .transparent(true)
+    .macos_overlay_chrome()
+    .shadow(true)
+    .background_color(window_bg())
     .build();
 
     match window {
-        Ok(_) => Ok(()),
+        Ok(win) => {
+            finish_macos_window(&win);
+            Ok(())
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -1632,15 +1703,14 @@ async fn install_portable_update(
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("启动替换脚本失败: {e}"))?;
+        Ok(())
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = script_path;
         let _ = new_exe;
-        return Err("便携版更新仅支持 Windows".to_string());
+        Err("便携版更新仅支持 Windows".to_string())
     }
-
-    Ok(())
 }
 
 pub fn run() {
@@ -1654,10 +1724,13 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 // 窗口可见性由前端启动逻辑控制（无仓库时主窗口隐藏、只显示管理仓库窗口），
-                // 因此不恢复/保存可见性状态，避免插件把主窗口强制显示出来
+                // 因此不恢复/保存可见性状态，避免插件把主窗口强制显示出来。
+                // 也不恢复 DECORATIONS：旧会话曾是 decorations:false，恢复后会盖掉
+                // macOS Overlay 标题栏，导致系统红绿灯消失。
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::all()
-                        ^ tauri_plugin_window_state::StateFlags::VISIBLE,
+                        ^ tauri_plugin_window_state::StateFlags::VISIBLE
+                        ^ tauri_plugin_window_state::StateFlags::DECORATIONS,
                 )
                 .build(),
         )
@@ -1788,7 +1861,8 @@ pub fn run() {
             spawn_terminal,
             write_terminal,
             resize_terminal,
-            kill_terminal
+            kill_terminal,
+            list_system_fonts
         ])
         .setup(|app| {
             emit_boot_timing(app, "setup_begin");
@@ -1824,6 +1898,19 @@ pub fn run() {
                 // （StateFlags 里排除了 VISIBLE），所以此时窗口已经是正确尺寸/位置，
                 // 只差最后一步 show() → 用户看到的第一帧就是正确大小，完全没有跳动。
                 if let Some(window) = app.get_webview_window("main") {
+                    // Windows/Linux：配置里为了 macOS Overlay 写了 decorations:true，
+                    // 这里在 show 前关掉系统标题栏，改用自定义窗口控件。
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let _ = window.set_decorations(false);
+                    }
+                    // macOS：强制 Overlay 红绿灯（防止旧 window-state 或其它路径关掉 decorations）
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = window.set_decorations(true);
+                        let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
+                    }
+                    finish_macos_window(&window);
                     let _ = window.show();
                 }
                 emit_boot_timing(app, "main_window_shown");
