@@ -70,8 +70,27 @@ import "./theme.css";
 import "katex/dist/katex.min.css";
 import "../tags/Tag.css";
 
+/**
+ * 安全获取 TipTap EditorView。
+ * —— useEditor() 生成的 editor 对象在视图未挂载/已销毁时访问 editor.view 会抛错：
+ *    "The editor view is not available. Cannot access view['coordsAtPos']."
+ *    用此 helper 统一兜底：isDestroyed / !editor.view 时返回 null，
+ *    后续 coordsAtPos 等调用前 ?. 判断即可避免报错。
+ */
+function getEditorView(editor: any): import("prosemirror-view").EditorView | null {
+  if (!editor) return null;
+  try {
+    if (editor.isDestroyed) return null;
+    const view = editor.view;
+    return view ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** macOS WKWebView：折叠选区后清掉原生 Selection 残留（尤其跨块选区后点击）。 */
-function syncCollapsedDomSelection(view: EditorView, force = false) {
+function syncCollapsedDomSelection(view: EditorView | null | undefined, force = false) {
+  if (!view) return;
   const { empty, from } = view.state.selection;
   if (!empty) return;
   const domSel = window.getSelection();
@@ -235,7 +254,7 @@ function vimPageScrollCenterTipTap(
   containerRef: React.RefObject<HTMLDivElement | null>
 ): void {
   try {
-    const view = (editor as unknown as { view: any }).view;
+    const view = getEditorView(editor);
     const state = (editor as unknown as { state: any }).state;
     if (!view || !state) return;
     const doc = state.doc;
@@ -362,7 +381,8 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         const sc = containerRef.current?.querySelector('.tiptap-editor') as HTMLElement | null;
         if (sc && editor) {
           const { from } = editor.state.selection;
-          const coords = editor.view.coordsAtPos(from);
+          const view = getEditorView(editor);
+          const coords = view?.coordsAtPos?.(from);
           if (coords) {
             const lineCenterInContent =
               (coords.top + coords.bottom) / 2 - sc.getBoundingClientRect().top + sc.scrollTop;
@@ -852,8 +872,13 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
                     closeSourceEditor();
                     return;
                   }
-                  editor.view.dispatch(
-                    editor.view.state.tr.setNodeMarkup(pos, undefined, {
+                  const view = getEditorView(editor);
+                  if (!view) {
+                    closeSourceEditor();
+                    return;
+                  }
+                  view.dispatch(
+                    view.state.tr.setNodeMarkup(pos, undefined, {
                       src: el.getAttribute("src"),
                       alt: el.getAttribute("alt") || null,
                       title: el.getAttribute("title") || null,
@@ -1013,8 +1038,10 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
                   if (pos == null) return;
                   const current = editor.state.doc.nodeAt(pos);
                   if (!current || current.type.name !== "image") return;
-                  editor.view.dispatch(
-                    editor.view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, width: w })
+                  const view = getEditorView(editor);
+                  if (!view) return;
+                  view.dispatch(
+                    view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, width: w })
                   );
                 };
                 document.addEventListener("mousemove", moveHandler);
@@ -1161,7 +1188,7 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
       onSelectionUpdate: ({ editor: ed }) => {
         // macOS WebKit：折叠后清原生残留（跨块选区后尤其明显）
         if (isPlatformMacos() && ed.state.selection.empty) {
-          requestAnimationFrame(() => syncCollapsedDomSelection(ed.view, macPointerHadDomRange));
+          requestAnimationFrame(() => syncCollapsedDomSelection(getEditorView(ed), macPointerHadDomRange));
         }
 
         if (!typewriterModeRef.current) return;
@@ -1171,7 +1198,8 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
           const scrollContainer = containerRef.current?.querySelector('.tiptap-editor') as HTMLElement | null;
           if (!scrollContainer) return;
           const { from } = ed.state.selection;
-          const coords = ed.view.coordsAtPos(from);
+          const view = getEditorView(ed);
+          const coords = view?.coordsAtPos?.(from);
           if (!coords) return;
           // 以光标所在行的垂直中心为基准，而非行顶
           const lineCenter = (coords.top + coords.bottom) / 2;
@@ -1704,8 +1732,10 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         if (!editor) return;
 
         let pos: number;
+        const posView = getEditorView(editor);
+        if (!posView) return;
         try {
-          pos = editor.view.posAtDOM(anchor, 0);
+          pos = posView.posAtDOM(anchor, 0);
         } catch {
           return;
         }
@@ -1758,16 +1788,19 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         if (!anchor) {
           if (linkEditRef.current) {
             // 检查点击是否在编辑区域内（允许用户在源码文本中移动光标）
-            try {
-              const posInfo = editor.view.posAtCoords({ left: e.clientX, top: e.clientY });
-              if (posInfo) {
-                const { from, to } = linkEditRef.current;
-                if (posInfo.pos >= from && posInfo.pos < to) {
-                  return; // 点击在编辑区域内，不恢复
+            const coordsView = getEditorView(editor);
+            if (coordsView) {
+              try {
+                const posInfo = coordsView.posAtCoords({ left: e.clientX, top: e.clientY });
+                if (posInfo) {
+                  const { from, to } = linkEditRef.current;
+                  if (posInfo.pos >= from && posInfo.pos < to) {
+                    return; // 点击在编辑区域内，不恢复
+                  }
                 }
+              } catch {
+                /* 视图未就绪时忽略，回退到恢复 */
               }
-            } catch {
-              // posAtCoords 可能失败，回退到恢复
             }
             restoreLinkEdit();
           }
@@ -2075,8 +2108,8 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
             const scrollContainer = containerRef.current?.querySelector('.tiptap-editor');
             if (!scrollContainer) return;
             
-            const { view } = editor;
-            const coords = view.coordsAtPos(bestPos!);
+            const view = getEditorView(editor);
+            const coords = view?.coordsAtPos?.(bestPos!);
             if (coords) {
               const containerRect = scrollContainer.getBoundingClientRect();
               // 计算滚动距离：元素在视口的位置 - 容器在视口的位置 - 顶部边距
@@ -2098,8 +2131,8 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
           const scrollContainer = containerRef.current?.querySelector('.tiptap-editor');
           if (!scrollContainer) return;
           
-          const { view } = editor;
-          const coords = view.coordsAtPos(pos);
+          const view = getEditorView(editor);
+          const coords = view?.coordsAtPos?.(pos);
           if (coords) {
             const containerRect = scrollContainer.getBoundingClientRect();
             const scrollTop = coords.top - containerRect.top - containerRect.height / 3;
@@ -2138,8 +2171,8 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         requestAnimationFrame(() => {
           const scrollContainer = containerRef.current?.querySelector('.tiptap-editor') as HTMLElement | null;
           if (!scrollContainer) return;
-          const { view } = editor;
-          const coords = view.coordsAtPos(from);
+          const view = getEditorView(editor);
+          const coords = view?.coordsAtPos?.(from);
           if (coords) {
             const containerRect = scrollContainer.getBoundingClientRect();
             const targetScroll = scrollContainer.scrollTop + coords.top - containerRect.top - containerRect.height / 3;
@@ -2153,8 +2186,8 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         requestAnimationFrame(() => {
           const scrollContainer = containerRef.current?.querySelector('.tiptap-editor') as HTMLElement | null;
           if (!scrollContainer) return;
-          const { view } = editor;
-          const coords = view.coordsAtPos(from);
+          const view = getEditorView(editor);
+          const coords = view?.coordsAtPos?.(from);
           if (coords) {
             const containerRect = scrollContainer.getBoundingClientRect();
             const targetScroll = scrollContainer.scrollTop + coords.top - containerRect.top - containerRect.height / 3;

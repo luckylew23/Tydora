@@ -139,7 +139,11 @@ export const Mermaid = Node.create({
                   pos + pmNode.nodeSize - 1,
                   content,
                 );
-                editor.view.dispatch(tr);
+                try {
+                  if (!editor.isDestroyed && editor.view) editor.view.dispatch(tr);
+                } catch {
+                  /* 视图未就绪/已销毁时忽略 */
+                }
               }
             }
             cmSyncing = false;
@@ -284,7 +288,13 @@ export const Mermaid = Node.create({
         if (pos !== undefined && editor) {
           const pmNode = editor.state.doc.nodeAt(pos);
           if (pmNode) {
-            editor.view.dispatch(editor.state.tr.delete(pos, pos + pmNode.nodeSize));
+            try {
+              if (!editor.isDestroyed && editor.view) {
+                editor.view.dispatch(editor.state.tr.delete(pos, pos + pmNode.nodeSize));
+              }
+            } catch {
+              /* 视图未就绪/已销毁时忽略 */
+            }
           }
         }
       });

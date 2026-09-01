@@ -393,7 +393,9 @@ export default function VaultManagerWindow() {
     // Home view
     return (
       <div className="vault-manager-content">
-        <img src={appIcon} alt="Tydora" className="vault-manager-icon" />
+        <div className="vault-manager-icon-wrapper">
+          <img src={appIcon} alt="Tydora" className="vault-manager-icon" />
+        </div>
         <h1 className="vault-manager-title">Tydora</h1>
         <p className="vault-manager-version">{version ? t("vaultManager.version", { version }) : ""}</p>
         <p className="vault-manager-subtitle">

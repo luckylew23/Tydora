@@ -410,11 +410,31 @@
   min-height: 0;
 }
 
+/* ===== 首页图标：iOS 风格圆角 App 图标样式 ===== */
+.vault-manager-icon-wrapper {
+  width: 112px;
+  height: 112px;
+  margin: 0 0 16px;
+  border-radius: 30px;                       /* 约 27% 比例，接近 iOS App 图标圆角 */
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* 外层大投影 + 内层轻微磨砂高光，模拟参考图的柔和阴影质感 */
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.22),
+    0 4px 12px rgba(0, 0, 0, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  -webkit-mask-image: -webkit-radial-gradient(white, black); /* Safari/WebKit 圆角裁切保险 */
+  isolation: isolate;
+}
+
 .vault-manager-icon {
-  width: 96px;
-  height: 96px;
-  margin-bottom: 12px;
-  filter: drop-shadow(0 4px 12px rgba(137, 180, 250, 0.3));
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .vault-manager-title {

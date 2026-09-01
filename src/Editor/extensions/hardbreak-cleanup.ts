@@ -52,7 +52,14 @@ export const HardBreakCleanup = Extension.create({
   onCreate() {
     const tr = removeHardBreaksAroundInlineAtoms(this.editor.state);
     if (tr?.docChanged) {
-      this.editor.view.dispatch(tr);
+      try {
+        const ed = this.editor;
+        if (!ed.isDestroyed && ed.view) {
+          ed.view.dispatch(tr);
+        }
+      } catch {
+        /* 视图未就绪/已销毁时忽略 */
+      }
     }
   },
 

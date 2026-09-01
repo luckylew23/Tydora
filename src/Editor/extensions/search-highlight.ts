@@ -27,12 +27,24 @@ export const SearchHighlight = Extension.create<SearchHighlightStorage>({
       setSearchHighlight: (query) => ({ editor }) => {
         (editor.storage as Record<string, any>).searchHighlight = { query };
         // 触发重新渲染
-        editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+        try {
+          if (!editor.isDestroyed && editor.view) {
+            editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+          }
+        } catch {
+          /* 视图未就绪/已销毁时忽略 */
+        }
         return true;
       },
       clearSearchHighlight: () => ({ editor }) => {
         (editor.storage as Record<string, any>).searchHighlight = { query: "" };
-        editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+        try {
+          if (!editor.isDestroyed && editor.view) {
+            editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+          }
+        } catch {
+          /* 视图未就绪/已销毁时忽略 */
+        }
         return true;
       },
     };

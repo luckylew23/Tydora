@@ -123,8 +123,8 @@ export function useLeader(options: UseLeaderOptions): UseLeaderReturn {
         e.stopPropagation();
       }
 
-      // 两种模式都处理菜单关闭
-      if (e.key === "Escape" || e.key === triggerKey) {
+      // Escape 始终关闭菜单
+      if (e.key === "Escape") {
         closeMenu();
         return;
       }
@@ -135,29 +135,36 @@ export function useLeader(options: UseLeaderOptions): UseLeaderReturn {
         return;
       }
 
-      // 主动模式：匹配菜单项
+      // 主动模式：优先匹配菜单项（让 triggerKey 也能作为菜单项，如 Space+Space）
       const currentItems = itemsRef.current;
       const hit = currentItems.find((it) => it.key === e.key);
-      if (!hit) return;
-
-      if (hit.children && hit.children.length > 0) {
-        setItems(hit.children);
-        setPath((p) => [...p, hit.label]);
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        if (timeout > 0) {
-          timeoutRef.current = setTimeout(() => {
-            setOpen(false);
-            setItems(rootItemsRef.current);
-            setPath([]);
-          }, timeout);
+      if (hit) {
+        if (hit.children && hit.children.length > 0) {
+          setItems(hit.children);
+          setPath((p) => [...p, hit.label]);
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          if (timeout > 0) {
+            timeoutRef.current = setTimeout(() => {
+              setOpen(false);
+              setItems(rootItemsRef.current);
+              setPath([]);
+            }, timeout);
+          }
+          return;
         }
+
+        if (hit.action) {
+          dispatchRef.current(hit.action);
+        }
+        closeMenu();
         return;
       }
 
-      if (hit.action) {
-        dispatchRef.current(hit.action);
+      // triggerKey 再次按下且无菜单项匹配时关闭菜单（toggle 行为）
+      if (e.key === triggerKey) {
+        closeMenu();
+        return;
       }
-      closeMenu();
     };
 
     window.addEventListener("keydown", handleKeyDown, true);

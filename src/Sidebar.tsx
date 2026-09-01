@@ -2506,10 +2506,46 @@ interface OutlineNode {
 function parseOutline(markdown: string): OutlineItem[] {
   const items: OutlineItem[] = [];
   const lines = markdown.split("\n");
+  // fenced code block（``` 或 ~~~）开关：避免把代码里的 # 注释识别成标题
+  let inFence = false;
+  let fenceMarker = ""; // 当前围栏标记：``` 或 ~~~，避免不同标记交叉闭合
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(#{1,6})\s+(.+)/);
+    const rawLine = lines[i];
+    // 1) 先处理 fenced code block 标记行（允许最多 3 个前导空格，符合 CommonMark）
+    const fenceMatch = rawLine.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];               // 具体标记：```、````、~~~ 等
+      const markerChar = marker[0];               // ` 或 ~
+      const markerLen = marker.length;
+      if (!inFence) {
+        // 进入围栏：必须整行只有标记 + 可选信息字符串，不能被 info 字符串打断
+        inFence = true;
+        fenceMarker = marker;
+      } else if (markerChar === fenceMarker[0] && markerLen >= fenceMarker.length) {
+        // 闭合围栏：同类字符 + 长度 >= 开围栏长度 才算闭合
+        // 额外校验：闭合围栏后面只能跟空白，防止被 ```foo 误伤
+        const after = rawLine.slice(fenceMatch[0].length);
+        if (/^\s*$/.test(after)) {
+          inFence = false;
+          fenceMarker = "";
+        }
+      }
+      continue;
+    }
+    // 2) 在围栏内部不解析标题
+    if (inFence) continue;
+    // 3) ATX 标题：按 CommonMark 规范，前导空格 <= 3 且格式为 #{1,6} + 空格 + 文本
+    //    缩进代码块（>=4 空格）或行首非 # 直接跳过
+    const m = rawLine.match(/^ {0,3}(#{1,6})(?:\s+(.+?))?\s*#*\s*$/);
     if (m) {
-      items.push({ level: m[1].length, text: m[2].trim(), line: i + 1 });
+      // 文本部分可以为空（如 "###   " 也算合法空标题），但大纲里我们跳过空文本
+      const text = (m[2] ?? "").trim();
+      if (text) {
+        items.push({ level: m[1].length, text, line: i + 1 });
+      } else {
+        // 空标题也保留一项，避免"### " 这种合法但没内容的行影响定位
+        // 但如果完全没文本就不加入大纲，避免空白项污染
+      }
     }
   }
   return items;

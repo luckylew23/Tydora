@@ -62,14 +62,26 @@ export const HeadingHighlight = Extension.create<HeadingHighlightStorage>({
           storage.highlightTo = textTo;
 
           // 触发重新渲染
-          editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+          try {
+            if (!editor.isDestroyed && editor.view) {
+              editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+            }
+          } catch {
+            /* 视图未就绪/已销毁时忽略 */
+          }
 
           // 设置定时器移除高亮
           storage.timerId = setTimeout(() => {
             storage.highlightFrom = null;
             storage.highlightTo = null;
             storage.timerId = null;
-            editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+            try {
+              if (!editor.isDestroyed && editor.view) {
+                editor.view.dispatch(editor.view.state.tr.setMeta("forceUpdate", true));
+              }
+            } catch {
+              /* 视图未就绪/已销毁时忽略 */
+            }
           }, duration);
 
           return true;

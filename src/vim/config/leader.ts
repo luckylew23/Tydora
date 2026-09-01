@@ -20,8 +20,7 @@ export const leaderConfig: LeaderConfig = {
   items: [
     // 文件操作
     { key: "e", label: "文件树", action: "app.toggle-sidebar" },
-    { key: "o", label: "打开文件", action: "app.quick-open" },
-    { key: "f", label: "查找", action: "app.find" },
+    { key: " ", label: "打开文件", action: "app.quick-open" },
     { key: "s", label: "全局搜索", action: "app.global-search" },
 
     // 视图
