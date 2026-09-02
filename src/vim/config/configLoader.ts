@@ -14,6 +14,7 @@ export const DEFAULT_VIM_CONFIG: VimConfig = {
   leaderKey: " ",
   menuTimeout: 3000,
   conflictKeys: buildDefaultConflictKeys(),
+  __v: 2,
 };
 
 /** 从 localStorage 加载 Vim 配置，合并默认值（含 conflictKeys 逐键合并，新增的冲突键自动补默认值） */
@@ -24,7 +25,17 @@ export function loadVimConfig(): VimConfig {
       const parsed = JSON.parse(saved) as Partial<VimConfig>;
       // 合并 conflictKeys：以默认值为基底，覆盖用户已保存的值
       const mergedConflictKeys = { ...buildDefaultConflictKeys(), ...(parsed.conflictKeys ?? {}) };
-      return { ...DEFAULT_VIM_CONFIG, ...parsed, conflictKeys: mergedConflictKeys };
+
+      // ── 迁移 v1 → v2：ctrl+p 默认从 true(vim 接管) 改为 false(App 命令面板生效) ──
+      // 旧配置中 ctrl+p 是默认值 true（非用户主动设置），删除让它回退到新默认值 false。
+      // 判断依据：v1 时期 buildDefaultConflictKeys() 总是写入 ctrl+p=true，
+      // 所以只要旧 saved 里有该键且 __v < 2，就视为旧默认值并清除。
+      const savedVersion = parsed.__v ?? 1;
+      if (savedVersion < 2 && mergedConflictKeys["ctrl+p"] === true) {
+        delete mergedConflictKeys["ctrl+p"];
+      }
+
+      return { ...DEFAULT_VIM_CONFIG, ...parsed, conflictKeys: mergedConflictKeys, __v: 2 };
     }
   } catch {
     // 损坏的配置回退默认值

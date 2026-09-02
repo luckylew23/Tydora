@@ -132,6 +132,24 @@ export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): Compon
               act("confirm-open");
               break;
 
+            // 分屏打开：\ 水平分屏(lr)，- 垂直分屏(tb) —— 等价于先分屏再在新窗格中打开选中文件
+            case "\\":
+            case "-": {
+              const p = document
+                .querySelector<HTMLElement>(".tree-node.pending-active[data-path]")
+                ?.dataset.path;
+              if (p) {
+                window.dispatchEvent(new CustomEvent("vim-sidebar-action", {
+                  detail: {
+                    action: key === "\\" ? "open-split-lr" : "open-split-tb",
+                    path: p,
+                  },
+                }));
+                treeActiveRef.current = false;
+              }
+              break;
+            }
+
             // 文件操作：直接走 Sidebar 内部同逻辑（避免依赖右键菜单 DOM 查找）
             case "a":
             case "%":

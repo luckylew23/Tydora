@@ -23,6 +23,8 @@ export interface VimConfig {
   menuTimeout: number;
   /** 冲突快捷键让渡配置：key="ctrl+d", value=true(让渡给 Vim)/false(App 快捷键生效) */
   conflictKeys?: Record<string, boolean>;
+  /** 配置版本号：用于向后兼容迁移（缺省=1，当前=2） */
+  __v?: number;
 }
 
 /** Leader 菜单项 */

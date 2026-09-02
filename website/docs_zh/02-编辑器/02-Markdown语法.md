@@ -7,8 +7,7 @@ tags: [编辑器]
 
 Tydora 基于 TipTap 3.x + CodeMirror 6 引擎，支持完整的 CommonMark 与 GitHub 风格（GFM）语法，并扩展了 WikiLink、Callout、数学公式、Mermaid、脚注等多种能力。本页汇总写作时最常用的语法。
 
-> [!NOTE]
-> 以下示例既可在**即时渲染**模式下直接输入（会自动渲染），也可在**源码模式**下以纯文本编写。切换方式见 [[02-编辑器/01-编辑模式]]。
+> [!NOTE]以下示例既可在即时渲染模式下直接输入（会自动渲染），也可在源码模式下以纯文本编写。切换方式见 。
 
 ## 基础语法
 
@@ -23,7 +22,7 @@ Tydora 基于 TipTap 3.x + CodeMirror 6 引擎，支持完整的 CommonMark 与 
 ###### 六级标题
 ```
 
-> 快捷设置标题级别：`Ctrl+Alt+1` ~ `Ctrl+Alt+6`，`Ctrl+Alt+0` 恢复为正文段落。详见 [[07-设置/04-快捷键速查]]。
+> 快捷设置标题级别：`Ctrl+Alt+1` \~ `Ctrl+Alt+6`，`Ctrl+Alt+0` 恢复为正文段落。详见 [[07-设置/04-快捷键速查]]。
 
 ### 文本格式
 
@@ -66,13 +65,13 @@ Tydora 基于 TipTap 3.x + CodeMirror 6 引擎，支持完整的 CommonMark 与 
 
 使用三个反引号包裹，并标注语言以获得高亮：
 
-````markdown
+```markdown
 ```javascript
 function hello() {
   console.log("Hello, Tydora!");
 }
 ```
-````
+```
 
 > 详见 [[02-编辑器/03-代码块]]。
 
@@ -204,6 +203,7 @@ graph TD
     B -->|是| C[执行]
     B -->|否| D[退出]
 ```
+
 ```
 
 > 详见 [[02-编辑器/05-Mermaid图表]]。
@@ -217,3 +217,4 @@ graph TD
 - [[02-编辑器/07-Frontmatter]] — 元数据
 - [[03-知识管理/01-Wiki链接]] — 双向链接语法
 - [[02-编辑器/01-编辑模式]] — 编辑模式介绍
+```

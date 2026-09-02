@@ -26,7 +26,7 @@ export const CONFLICT_KEYS: ConflictKeyDef[] = [
   { id: "ctrl+f", label: "查找",         keys: "Ctrl+F", vimAction: "向下翻整页",       defaultYield: true },
   { id: "ctrl+w", label: "关闭窗格",     keys: "Ctrl+W", vimAction: "窗口操作前缀",     defaultYield: true },
   { id: "ctrl+o", label: "快速打开",     keys: "Ctrl+O", vimAction: "跳转列表后退",     defaultYield: true },
-  { id: "ctrl+p", label: "命令面板",     keys: "Ctrl+P", vimAction: "向上移动一行",     defaultYield: true },
+  { id: "ctrl+p", label: "命令面板",     keys: "Ctrl+P", vimAction: "向上移动一行",     defaultYield: false },
   { id: "ctrl+g", label: "知识图谱",     keys: "Ctrl+G", vimAction: "显示文件信息",     defaultYield: true },
 ];
 

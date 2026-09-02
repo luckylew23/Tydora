@@ -16,7 +16,7 @@ const TerminalView = lazy(() => import("./Terminal/TerminalView").then(m => ({ d
 import { killTerminal, unregisterTerminal } from "./Terminal/terminalApi";
 import { startTerminalSettingsSync } from "./Terminal/terminal-settings";
 import Sidebar, { VaultInfo } from "./Sidebar";
-import { FileTreeVim, useWindowNavigation, useVim } from "./vim";
+import { FileTreeVim, useWindowNavigation, useVim, useLeader, LeaderMenu } from "./vim";
 import { collectPaneIds, findAdjacentPane } from "./vim/panes";
 import type { SplitNode, PaneLeaf, SplitGroup } from "./vim/panes";
 // 用 Vim HOC 包裹 Sidebar：enabled=false 时透传，零影响
@@ -305,12 +305,31 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const { theme } = useTheme();
   const { t } = useTranslation();
   // Vim 上下文：用于在全局快捷键（Ctrl+E / Ctrl+H / Ctrl+F / Ctrl+W 等）中判断是否需要让渡给 vim 模态
-  const { enabled: vimEnabled, mode: vimMode, conflictKeys: vimConflictKeys } = useVim();
+  const { enabled: vimEnabled, mode: vimMode, conflictKeys: vimConflictKeys, leaderKey: vimLeaderKey, menuTimeout: vimMenuTimeout } = useVim();
   // useRef 存 vim 状态，给 window 级 keydown listener 读取（避免频繁重新注册 listener）
   const vimStateRef = useRef({ enabled: false, mode: "normal" as "normal" | "insert" | "visual", conflictKeys: {} as Record<string, boolean> });
   vimStateRef.current.enabled = vimEnabled;
   vimStateRef.current.mode = vimMode;
   vimStateRef.current.conflictKeys = vimConflictKeys;
+
+  // App 级 Leader 菜单：为欢迎面板/无编辑器场景提供 Leader 菜单支持（TipTapEditor/CodeMirrorEditor 内部各有一套）
+  const appLeaderDispatch = (action: string): boolean => {
+    if (action.startsWith("app.")) {
+      window.dispatchEvent(new CustomEvent("vim-app-action", {
+        detail: { action: action.slice("app.".length) },
+      }));
+      return true;
+    }
+    return false;
+  };
+  const appLeader = useLeader({
+    enabled: vimEnabled,
+    triggerKey: vimLeaderKey,
+    timeout: vimMenuTimeout,
+    // 欢迎面板时无编辑器，视 Vim mode 为 normal（即只要 Vim 功能开启就可以使用 Leader）
+    active: vimMode !== "insert",
+    dispatchAction: appLeaderDispatch,
+  });
   /**
    * 在 Vim 开启且当前 vim 模态不是 insert 时，若焦点在编辑器（ProseMirror/CodeMirror）内
    * 或在 vim 管理的富文本节点内，让快捷键让渡给 vim 扩展。
@@ -2768,9 +2787,10 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     return () => window.removeEventListener("vim-app-action", handler);
   }, []);
 
-  // Vim 文件树动作：refresh / highlight-only / open
+  // Vim 文件树动作：refresh / highlight-only / open / open-split-*
   // - highlight-only：仅在 Sidebar 中把路径标为「hover/选中高亮」但不打开文件（用于 j/k 移动光标）
   // - open：调用 handleSelectFile 真正在编辑器中打开文件 / 目录
+  // - open-split-lr / open-split-tb：先分屏（水平=lr / 垂直=tb），再把选中文件打开到新窗格
   // - refresh：treeRefreshKey++ 触发侧栏 loadRoot
   useEffect(() => {
     const handler = (e: Event) => {
@@ -2784,11 +2804,29 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
             handleSelectFile(detail.path);
           }
           break;
+        case "open-split-lr":
+        case "open-split-tb": {
+          const path = detail.path;
+          if (!path) break;
+          const dir = detail.action === "open-split-lr" ? "lr" : "tb";
+          // 若还没有编辑器窗格（欢迎面板）则直接打开文件，不走分屏
+          const hasEditorPane = panesRef.current.some((p) => p.kind === "editor");
+          if (!hasEditorPane) {
+            handleSelectFile(path);
+            break;
+          }
+          handleSplit(dir);
+          // 等新窗格挂载并激活（activePaneId 已切到新窗格）后，在其缓冲中打开目标文件
+          setTimeout(() => {
+            handleSelectFile(path);
+          }, 80);
+          break;
+        }
       }
     };
     window.addEventListener("vim-sidebar-action", handler);
     return () => window.removeEventListener("vim-sidebar-action", handler);
-  }, [handleSelectFile]);
+  }, [handleSelectFile, handleSplit]);
 
   // Vim 窗口导航：Ctrl+w h/j/k/l 切换焦点
   useWindowNavigation();
@@ -3971,6 +4009,15 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
               {t("app.wordCount", { count: wordCount })}
             </span>
           </div>
+          )}
+
+          {/* App 级 Leader 菜单：欢迎面板 / 无 TipTap/CodeMirror 编辑器时的兜底菜单 */}
+          {vimEnabled && (
+            <LeaderMenu
+              open={appLeader.open}
+              items={appLeader.items}
+              path={appLeader.path}
+            />
           )}
         </main>
       </div>
