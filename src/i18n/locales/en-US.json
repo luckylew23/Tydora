@@ -462,6 +462,16 @@
       "noteCard": "Note Card",
       "mediaCard": "Media Card"
     },
+    "sidebar": {
+      "title": "Sidebar",
+      "desc": "Choose whether each sidebar tab appears on the left or right sidebar.",
+      "files": "Files",
+      "search": "Search",
+      "outline": "Outline",
+      "bookmarks": "Bookmarks",
+      "left": "Left Sidebar",
+      "right": "Right Sidebar"
+    },
     "editor": {
       "defaultMode": "Default Edit Mode",
       "defaultModeDesc": "Edit mode used when creating new files.",
@@ -571,6 +581,8 @@
     "toolbar": {
       "collapseSidebar": "Collapse Sidebar",
       "expandSidebar": "Expand Sidebar",
+      "collapseRightSidebar": "Collapse Right Sidebar",
+      "expandRightSidebar": "Expand Right Sidebar",
       "mindmap": "Mind Map",
       "graph": "Graph",
       "exportAndCopy": "Copy & Export",
@@ -867,7 +879,8 @@
     },
     "empty": {
       "noVault": "No vault opened",
-      "openVaultHint": "Click the button below to open a folder"
+      "openVaultHint": "Click the button below to open a folder",
+      "noTabs": "No tabs on this sidebar\nAssign tabs to this sidebar in General Settings"
     },
     "dialog": {
       "deleteConfirmTitle": "Confirm Delete",

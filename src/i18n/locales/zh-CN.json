@@ -462,6 +462,16 @@
       "noteCard": "笔记卡片",
       "mediaCard": "多媒体卡片"
     },
+    "sidebar": {
+      "title": "侧栏设置",
+      "desc": "配置每个侧栏标签页显示在左侧栏或右侧栏。",
+      "files": "文件",
+      "search": "搜索",
+      "outline": "大纲",
+      "bookmarks": "书签",
+      "left": "左侧栏",
+      "right": "右侧栏"
+    },
     "editor": {
       "defaultMode": "默认编辑模式",
       "defaultModeDesc": "新建文件时使用的编辑模式。",
@@ -571,6 +581,8 @@
     "toolbar": {
       "collapseSidebar": "折叠侧栏",
       "expandSidebar": "展开侧栏",
+      "collapseRightSidebar": "折叠右侧栏",
+      "expandRightSidebar": "展开右侧栏",
       "mindmap": "思维导图",
       "graph": "关系图谱",
       "exportAndCopy": "复制和导出",
@@ -866,7 +878,8 @@
     },
     "empty": {
       "noVault": "尚未打开仓库",
-      "openVaultHint": "点击底部按钮打开一个文件夹"
+      "openVaultHint": "点击底部按钮打开一个文件夹",
+      "noTabs": "此侧栏暂无标签页\n在通用设置中分配标签页到此侧栏"
     },
     "dialog": {
       "deleteConfirmTitle": "删除确认",

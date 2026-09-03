@@ -13,6 +13,7 @@ import { LinkIndexService } from "./wikilink";
 import { resolveRelativePath } from "./services";
 import { relativePath as computeRelativePath } from "./services/ImageManager";
 import { BookmarksPanel } from "./Bookmarks";
+import { type SidebarTab } from "./Settings";
 import "./Sidebar.css";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -88,6 +89,10 @@ interface SidebarProps {
   onWidthChange: (width: number) => void;
   onBookmark: (filePath: string, isDirectory: boolean) => void;
   outlineTrigger?: number;
+  /** 侧栏位于左/右；右栏会镜像边框与 resize 方向 */
+  side?: "left" | "right";
+  /** 本侧栏渲染哪些 tab（顺序固定 files→search→outline→bookmarks）；空数组则显示空状态 */
+  tabs?: SidebarTab[];
 }
 
 interface ContextMenuItem {
@@ -2907,12 +2912,21 @@ export default function Sidebar({
   onWidthChange,
   onBookmark,
   outlineTrigger,
+  side = "left",
+  tabs,
 }: SidebarProps) {
   bootStart("sidebar_component_render");
   bootStamp("sidebar_component_entered");
   const activeVault = activeVaultIndex >= 0 ? vaults[activeVaultIndex] : null;
   const [isResizing, setIsResizing] = useState(false);
-  const [activeTab, setActiveTab] = useState<"files" | "search" | "outline" | "bookmarks">("files");
+  // 本侧栏可渲染的 tab 列表（默认全部 4 个，顺序固定 files→search→outline→bookmarks）
+  const visibleTabs = useMemo<SidebarTab[]>(
+    () => tabs ?? ["files", "search", "outline", "bookmarks"],
+    [tabs],
+  );
+  const [activeTab, setActiveTab] = useState<"files" | "search" | "outline" | "bookmarks">(
+    visibleTabs[0] ?? "files",
+  );
   const [searchQuery, setSearchQuery] = useState("");
   // Trigger re-render on language change
   useTranslation();
@@ -2960,19 +2974,41 @@ export default function Sidebar({
   );
 
   const switchTab = useCallback((tab: "files" | "search" | "outline" | "bookmarks") => {
+    // 本侧栏不渲染该 tab 时忽略（避免 vim/快捷键切换把焦点设到不存在的面板）
+    if (!visibleTabs.includes(tab)) return;
     setActiveTab(tab);
     if (tab !== "search") {
       setSearchQuery("");
     }
-  }, []);
+  }, [visibleTabs]);
+
+  // tabs 变化后（如设置里把当前 activeTab 移到另一侧）：把 activeTab 重置为本侧第一个 tab
+  useEffect(() => {
+    if (visibleTabs.length === 0) return;
+    if (!visibleTabs.includes(activeTab)) {
+      setActiveTab(visibleTabs[0]);
+    }
+  }, [visibleTabs, activeTab]);
 
   // 侧栏从折叠→展开、或 activeTab 切换时，把焦点自动移到当前 Tab 的主内容区
   useEffect(() => {
     if (collapsed) return;
+    if (!visibleTabs.includes(activeTab)) return;
     // 延迟一帧，确保切 Tab 后的 DOM 已渲染（如搜索 input、FileTree 挂载完成）
-    const id = window.requestAnimationFrame(() => focusTabContent(activeTab));
+    const id = window.requestAnimationFrame(() => {
+      // 编辑器正持有焦点时不抢焦点：否则 vim 模式下 i / Ctrl+d/u 会失效
+      // （焦点跑到侧栏面板后，编辑器收不到按键）。
+      const active = document.activeElement;
+      if (active) {
+        const editorHost =
+          document.querySelector(".ProseMirror") as HTMLElement | null
+          ?? document.querySelector(".codemirror-editor") as HTMLElement | null;
+        if (editorHost && editorHost.contains(active)) return;
+      }
+      focusTabContent(activeTab);
+    });
     return () => window.cancelAnimationFrame(id);
-  }, [collapsed, activeTab, focusTabContent]);
+  }, [collapsed, activeTab, focusTabContent, visibleTabs]);
 
   // Ctrl+Shift+F to toggle search tab
   useEffect(() => {
@@ -2981,6 +3017,8 @@ export default function Sidebar({
         e.preventDefault();
         setActiveTab((prev) => {
           const next = prev === "search" ? "files" : "search";
+          // 本侧栏不渲染目标 tab 时不动（让另一侧栏接管，或保持现状）
+          if (!visibleTabs.includes(next)) return prev;
           if (next !== "search") setSearchQuery("");
           return next;
         });
@@ -2988,7 +3026,7 @@ export default function Sidebar({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [visibleTabs]);
 
   // Vim Leader 菜单的全局搜索：监听 vim-sidebar-tab 事件切换侧栏 tab
   useEffect(() => {
@@ -3005,13 +3043,18 @@ export default function Sidebar({
   // Ctrl+h 到最左边界 / focusPane 跨界 → 把焦点交给侧栏当前 tab 的主内容区
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ tab?: "files" | "search" | "outline" | "bookmarks" }>).detail ?? {};
+      const detail = (e as CustomEvent<{ tab?: "files" | "search" | "outline" | "bookmarks"; side?: "left" | "right" }>).detail ?? {};
+      // 只处理属于本侧栏的事件：未指定 side 时默认 left（兼容旧调用方）
+      const targetSide = detail.side === "right" ? "right" : "left";
+      if (targetSide !== side) return;
       if (collapsed) return;
+      // 指定了不属于本侧栏的 tab：忽略（让拥有该 tab 的侧栏处理）
+      if (detail.tab && !visibleTabs.includes(detail.tab)) return;
       focusTabContent(detail.tab ?? activeTab);
     };
     window.addEventListener("vim-sidebar-focus", handler);
     return () => window.removeEventListener("vim-sidebar-focus", handler);
-  }, [collapsed, activeTab, focusTabContent]);
+  }, [collapsed, activeTab, focusTabContent, visibleTabs, side]);
 
   // 外部触发切换到大纲（如双击 .md 文件时按设置自动展开大纲）
   const prevOutlineTriggerRef = useRef<number | undefined>(outlineTrigger);
@@ -3037,7 +3080,8 @@ export default function Sidebar({
     if (!isResizing) return;
     const handleMouseMove = (e: MouseEvent) => {
       const deltaX = e.clientX - startX;
-      const newWidth = startWidth + deltaX;
+      // 右侧栏往左拖（deltaX 负）应变宽，故方向取反；左侧栏保持 +deltaX
+      const newWidth = startWidth + (side === "right" ? -deltaX : deltaX);
       const clampedWidth = Math.max(180, Math.min(800, newWidth));
       onWidthChange(clampedWidth);
     };
@@ -3048,7 +3092,7 @@ export default function Sidebar({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isResizing, onWidthChange, startX, startWidth]);
+  }, [isResizing, onWidthChange, startX, startWidth, side]);
 
   bootStamp("sidebar_component_rendered");
   bootEnd("sidebar_component_render");
@@ -3056,7 +3100,7 @@ export default function Sidebar({
     <div
       ref={sidebarRef}
       tabIndex={-1}
-      className={`sidebar${collapsed ? " collapsed" : ""}${isResizing ? " resizing" : ""}`}
+      className={`sidebar${collapsed ? " collapsed" : ""}${isResizing ? " resizing" : ""}${side === "right" ? " sidebar-right" : ""}`}
       style={{ width: collapsed ? 0 : width }}
       onMouseDownCapture={(e) => {
         // 用户点击侧栏时：若点击的是「非可聚焦」元素，把焦点交给当前 Tab 的主内容容器。
@@ -3078,106 +3122,128 @@ export default function Sidebar({
 
       <div className="sidebar-header">
         <div className="sidebar-tabs-wrapper">
-          <button
-            className={`sidebar-tab${activeTab === "files" ? " active" : ""}`}
-            onClick={() => switchTab("files")}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-            </svg>
-          </button>
-          <button
-            className={`sidebar-tab${activeTab === "search" ? " active" : ""}`}
-            onClick={() => switchTab("search")}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <path d="M21 21l-4.35-4.35" />
-            </svg>
-          </button>
-          <button
-            className={`sidebar-tab${activeTab === "outline" ? " active" : ""}`}
-            onClick={() => switchTab("outline")}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="8" y1="6" x2="21" y2="6" />
-              <line x1="8" y1="12" x2="21" y2="12" />
-              <line x1="8" y1="18" x2="21" y2="18" />
-              <line x1="3" y1="6" x2="3.01" y2="6" />
-              <line x1="3" y1="12" x2="3.01" y2="12" />
-              <line x1="3" y1="18" x2="3.01" y2="18" />
-            </svg>
-          </button>
-          <button
-            className={`sidebar-tab${activeTab === "bookmarks" ? " active" : ""}`}
-            onClick={() => switchTab("bookmarks")}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-            </svg>
-          </button>
+          {visibleTabs.includes("files") && (
+            <button
+              className={`sidebar-tab${activeTab === "files" ? " active" : ""}`}
+              onClick={() => switchTab("files")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+          )}
+          {visibleTabs.includes("search") && (
+            <button
+              className={`sidebar-tab${activeTab === "search" ? " active" : ""}`}
+              onClick={() => switchTab("search")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+            </button>
+          )}
+          {visibleTabs.includes("outline") && (
+            <button
+              className={`sidebar-tab${activeTab === "outline" ? " active" : ""}`}
+              onClick={() => switchTab("outline")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6" />
+                <line x1="8" y1="12" x2="21" y2="12" />
+                <line x1="8" y1="18" x2="21" y2="18" />
+                <line x1="3" y1="6" x2="3.01" y2="6" />
+                <line x1="3" y1="12" x2="3.01" y2="12" />
+                <line x1="3" y1="18" x2="3.01" y2="18" />
+              </svg>
+            </button>
+          )}
+          {visibleTabs.includes("bookmarks") && (
+            <button
+              className={`sidebar-tab${activeTab === "bookmarks" ? " active" : ""}`}
+              onClick={() => switchTab("bookmarks")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
-      {activeTab === "files" && (
-        <div ref={filesPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          {activeVault ? (
-            <FileTree
-              key={activeVault.path}
-              rootPath={activeVault.path}
-              activePath={currentFilePath}
-              onSelect={handleSelectFile}
-              refreshKey={refreshKey}
-              onNewWindow={onNewWindow}
-              onOpenInNewPanel={onOpenInNewPanel}
-              canOpenInNewPanel={canOpenInNewPanel}
-              onBookmark={onBookmark}
-            />
-          ) : (
-            <div className="sidebar-tree">
-              <div className="tree-empty">{i18n.t("sidebar.empty.noVault")}</div>
-              <div className="tree-empty-hint">{i18n.t("sidebar.empty.openVaultHint")}</div>
+      {visibleTabs.length === 0 ? (
+        <div className="sidebar-empty">
+          <div className="sidebar-empty-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <line x1="9" y1="4" x2="9" y2="20" />
+            </svg>
+          </div>
+          <div className="sidebar-empty-text">{i18n.t("sidebar.empty.noTabs")}</div>
+        </div>
+      ) : (
+        <>
+          {activeTab === "files" && (
+            <div ref={filesPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              {activeVault ? (
+                <FileTree
+                  key={activeVault.path}
+                  rootPath={activeVault.path}
+                  activePath={currentFilePath}
+                  onSelect={handleSelectFile}
+                  refreshKey={refreshKey}
+                  onNewWindow={onNewWindow}
+                  onOpenInNewPanel={onOpenInNewPanel}
+                  canOpenInNewPanel={canOpenInNewPanel}
+                  onBookmark={onBookmark}
+                />
+              ) : (
+                <div className="sidebar-tree">
+                  <div className="tree-empty">{i18n.t("sidebar.empty.noVault")}</div>
+                  <div className="tree-empty-hint">{i18n.t("sidebar.empty.openVaultHint")}</div>
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
 
-      {activeTab === "search" && (
-        <>
-          <SearchBar
-            query={searchQuery}
-            onQueryChange={setSearchQuery}
-            onClose={() => switchTab("files")}
-          />
-          {searchQuery.trim() ? (
-            <SearchResults
-              vaultPath={activeVault?.path ?? ""}
-              query={searchQuery}
-              onSelectFile={handleSelectFile}
-            />
-          ) : (
-            <div className="sidebar-tree">
-              <div className="tree-empty">{i18n.t("sidebar.search.hint")}</div>
+          {activeTab === "search" && (
+            <>
+              <SearchBar
+                query={searchQuery}
+                onQueryChange={setSearchQuery}
+                onClose={() => switchTab("files")}
+              />
+              {searchQuery.trim() ? (
+                <SearchResults
+                  vaultPath={activeVault?.path ?? ""}
+                  query={searchQuery}
+                  onSelectFile={handleSelectFile}
+                />
+              ) : (
+                <div className="sidebar-tree">
+                  <div className="tree-empty">{i18n.t("sidebar.search.hint")}</div>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === "outline" && (
+            <div ref={outlinePanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <Outline content={content} onSelectHeading={onSelectHeading} />
+            </div>
+          )}
+
+          {activeTab === "bookmarks" && (
+            <div ref={bookmarksPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <BookmarksPanel
+                vaultPath={activeVault?.path ?? null}
+                vaults={vaults}
+                onSelectFile={handleSelectFile}
+                onNewWindow={onNewWindow}
+              />
             </div>
           )}
         </>
-      )}
-
-      {activeTab === "outline" && (
-        <div ref={outlinePanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <Outline content={content} onSelectHeading={onSelectHeading} />
-        </div>
-      )}
-
-      {activeTab === "bookmarks" && (
-        <div ref={bookmarksPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <BookmarksPanel
-            vaultPath={activeVault?.path ?? null}
-            vaults={vaults}
-            onSelectFile={handleSelectFile}
-            onNewWindow={onNewWindow}
-          />
-        </div>
       )}
 
       <VaultSwitcher

@@ -31,7 +31,7 @@ import { ExportPreviewDialog } from "./components/ExportPreviewDialog";
 import { XhsPreviewPanel } from "./export/xiaohongshu";
 import { emit, listen } from "@tauri-apps/api/event";
 import { loadImageSettings, type ImageSettings } from "./services";
-import { loadEditorSettings, type EditorSettings, EDITOR_SETTINGS_KEY, SHORTCUTS_KEY, GRAPH_SETTINGS_KEY, DEFAULT_GRAPH } from "./Settings";
+import { loadEditorSettings, type EditorSettings, EDITOR_SETTINGS_KEY, SHORTCUTS_KEY, GRAPH_SETTINGS_KEY, DEFAULT_GRAPH, type SidebarTab, type SidebarTabPlacement, sidebarTabsForSide, DEFAULT_GENERAL } from "./Settings";
 import { applyFontSettings } from "./utils/systemFonts";
 import { applyMenuDensity, applyEditorSpacingFromSettings, normalizeMenuDensity } from "./utils/menuDensity";
 import { checkForUpdate, downloadAndInstall, relaunchApp, exitApp, isPortableVersion, type UpdateInfo } from "./services";
@@ -108,6 +108,8 @@ class EditorErrorBoundary extends Component<
 const VAULTS_KEY = "zmd-vaults";
 const ACTIVE_VAULT_KEY = "zmd-active-vault";
 const SIDEBAR_WIDTH_KEY = "zmd-sidebar-width";
+const RIGHT_SIDEBAR_OPEN_KEY = "zmd-right-sidebar-open";
+const RIGHT_SIDEBAR_WIDTH_KEY = "zmd-right-sidebar-width";
 const XHS_PREVIEW_WIDTH_KEY = "zmd-xhs-preview-width";
 const WINDOW_STATE_KEY = "zmd-window-state";
 // 编辑窗口（顶部栏"在新窗口打开"、新窗口打开仓库）使用独立状态 key，
@@ -548,6 +550,14 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         document.documentElement.dataset.codeBlockToolbar =
           settings.codeBlockToolbarStyle === "classic" ? "classic" : "minimal";
         applyMenuDensity(normalizeMenuDensity(settings.menuDensity));
+        // 侧栏 tab 分配变更后实时重算左/右栏可见 tab
+        const placementSrc = settings.sidebarTabPlacement ?? {};
+        const base = { ...DEFAULT_GENERAL.sidebarTabPlacement };
+        for (const tab of (["files","search","outline","bookmarks"] as SidebarTab[])) {
+          const v = placementSrc[tab];
+          if (v === "left" || v === "right") base[tab] = v;
+        }
+        setSidebarTabPlacement(base);
       } catch {}
     };
     applySettings();
@@ -742,6 +752,47 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       return 260;
     }
   });
+  // 右侧栏：默认折叠，宽度独立持久化（与左栏解耦）
+  const [rightSidebarOpen, setRightSidebarOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(RIGHT_SIDEBAR_OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(RIGHT_SIDEBAR_WIDTH_KEY);
+      return saved ? parseInt(saved) : 260;
+    } catch {
+      return 260;
+    }
+  });
+  // 侧栏 tab 分配（与通用设置 zmd-general-settings 同步）
+  const [sidebarTabPlacement, setSidebarTabPlacement] = useState<SidebarTabPlacement>(() => {
+    try {
+      const raw = localStorage.getItem("zmd-general-settings");
+      if (!raw) return DEFAULT_GENERAL.sidebarTabPlacement;
+      const parsed = JSON.parse(raw);
+      const base = { ...DEFAULT_GENERAL.sidebarTabPlacement };
+      const src = parsed?.sidebarTabPlacement ?? {};
+      for (const tab of (["files","search","outline","bookmarks"] as SidebarTab[])) {
+        const v = src[tab];
+        if (v === "left" || v === "right") base[tab] = v;
+      }
+      return base;
+    } catch {
+      return DEFAULT_GENERAL.sidebarTabPlacement;
+    }
+  });
+  const leftTabs = useMemo<SidebarTab[]>(
+    () => sidebarTabsForSide(sidebarTabPlacement, "left"),
+    [sidebarTabPlacement],
+  );
+  const rightTabs = useMemo<SidebarTab[]>(
+    () => sidebarTabsForSide(sidebarTabPlacement, "right"),
+    [sidebarTabPlacement],
+  );
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
   const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
@@ -1059,6 +1110,14 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   }, [sidebarWidth]);
 
   useEffect(() => {
+    localStorage.setItem(RIGHT_SIDEBAR_OPEN_KEY, rightSidebarOpen ? "1" : "0");
+  }, [rightSidebarOpen]);
+
+  useEffect(() => {
+    localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, String(rightSidebarWidth));
+  }, [rightSidebarWidth]);
+
+  useEffect(() => {
     localStorage.setItem(XHS_PREVIEW_WIDTH_KEY, String(xhsPreviewWidth));
   }, [xhsPreviewWidth]);
 
@@ -1113,6 +1172,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
 
   useEffect(() => { notifyResize(); }, [sidebarOpen]);
   useEffect(() => { notifyResize(); }, [sidebarWidth]);
+  useEffect(() => { notifyResize(); }, [rightSidebarOpen]);
+  useEffect(() => { notifyResize(); }, [rightSidebarWidth]);
 
   // 激活窗格变化后自动聚焦该窗格的编辑器（统一处理分屏/关闭/导航/点击等所有场景）。
   // —— 实现思路：不用 React 的 handle，直接模拟 Tab 键的原生焦点遍历：
@@ -1840,6 +1901,10 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
 
   const handleSidebarToggle = useCallback(() => {
     setSidebarOpen((prev) => !prev);
+  }, []);
+
+  const handleRightSidebarToggle = useCallback(() => {
+    setRightSidebarOpen((prev) => !prev);
   }, []);
 
   // 切换侧栏快捷键（从 localStorage 读取，默认值来自 src/config/shortcuts.json）
@@ -2676,19 +2741,47 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // ── Vim 窗格导航 ──────────────────────────────────────────────────
   // 焦点切换：在扁平 pane 列表中按方向移动
   const focusPane = useCallback((dir: "left" | "down" | "up" | "right") => {
-    // tmux 风格方向查找：在布局树里按方向找最近相邻窗格
+    // 把左侧栏/右侧栏也当窗格处理：根据当前焦点所在区域路由。
+    // 约束：左侧栏永远在最左、右侧栏永远在最右（不可越过）。
+    const activeEl = document.activeElement as HTMLElement | null;
+    const inRightSidebar = !!activeEl?.closest?.(".sidebar.sidebar-right");
+    const inLeftSidebar = !inRightSidebar && !!activeEl?.closest?.(".sidebar");
+
+    // 回到编辑器：聚焦最近活跃的编辑器窗格
+    const focusActiveEditorPane = () => {
+      const id = activePaneIdRef.current;
+      if (!id) return;
+      editorHandleRef.current = paneHandlesRef.current[id] ?? null;
+      // 等 React 渲染完 handle 已注册到 paneHandlesRef
+      setTimeout(() => paneHandlesRef.current[id]?.focus(), 60);
+    };
+
+    // ── 焦点在右侧栏：只能向左回到编辑器 ──
+    if (inRightSidebar) {
+      if (dir === "left") focusActiveEditorPane();
+      return; // right/up/down 不动（右侧栏已是最右）
+    }
+    // ── 焦点在左侧栏：只能向右回到编辑器 ──
+    if (inLeftSidebar) {
+      if (dir === "right") focusActiveEditorPane();
+      return; // left/up/down 不动（左侧栏已是最左）
+    }
+
+    // ── 焦点在编辑器：tmux 风格方向查找 ──
     const targetId = findAdjacentPane(splitLayoutRef.current, activePaneIdRef.current, dir);
-    // ── 诊断：确认 focusPane 是否执行（确认后删除）──
-    console.log("[focusPane]", dir, { targetId, activeId: activePaneIdRef.current });
-    // 左方向已到边界 → 焦点跨界到侧栏文件树（zzvim 行为）
+    // 左边界 → 跨界到左侧栏
     if (!targetId && dir === "left") {
-      window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { tab: "files" } }));
+      window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { side: "left" } }));
+      return;
+    }
+    // 右边界 → 跨界到右侧栏
+    if (!targetId && dir === "right") {
+      window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { side: "right" } }));
       return;
     }
     if (!targetId) return;
     setActivePaneId(targetId);
     editorHandleRef.current = paneHandlesRef.current[targetId] ?? null;
-    // 真正把键盘焦点移到目标 pane 的编辑器（等 React 渲染完 handle 已注册到 paneHandlesRef）
     setTimeout(() => paneHandlesRef.current[targetId]?.focus(), 60);
   }, []);
 
@@ -2730,9 +2823,9 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
       if (!sidebarOpen) {
         setSidebarOpen(true);
         window.dispatchEvent(new CustomEvent("vim-sidebar-tab", { detail: { tab: "files" } }));
-        // 等 React 渲染完侧栏内容后再聚焦文件树
+        // 等 React 渲染完侧栏内容后再聚焦文件树（左栏）
         setTimeout(() => {
-          window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { tab: "files" } }));
+          window.dispatchEvent(new CustomEvent("vim-sidebar-focus", { detail: { tab: "files", side: "left" } }));
         }, 80);
       } else {
         handleSidebarToggle();
@@ -3370,6 +3463,8 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
           onWidthChange={setSidebarWidth}
           onBookmark={handleShowBookmarkDialog}
           outlineTrigger={outlineTrigger}
+          side="left"
+          tabs={leftTabs}
         />
 
         {/* 编辑区域 */}
@@ -3781,6 +3876,24 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </div>
                 )}
               </div>
+              {/* 右侧栏折叠/展开按钮：紧挨"更多"按钮右侧 */}
+              <button
+                className="window-control-btn"
+                onClick={handleRightSidebarToggle}
+                title={rightSidebarOpen ? t("app.toolbar.collapseRightSidebar") : t("app.toolbar.expandRightSidebar")}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.4" />
+                  {rightSidebarOpen ? (
+                    <>
+                      <rect x="15" y="4" width="5" height="16" rx="1" fill="currentColor" opacity="0.25" />
+                      <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" strokeWidth="1.2" />
+                    </>
+                  ) : (
+                    <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" strokeWidth="1.2" />
+                  )}
+                </svg>
+              </button>
               <div className="window-controls-divider window-controls-native" />
               <button className="window-control-btn window-controls-native" onClick={handleMinimize} title={t("app.toolbar.minimize")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
@@ -4023,6 +4136,32 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
             />
           )}
         </main>
+
+        {/* 右侧栏：仅在展开或有 tab 时渲染，避免折叠态占位 */}
+        {(rightSidebarOpen || rightTabs.length > 0) && (
+          <VimSidebar
+            vaults={vaults}
+            activeVaultIndex={activeVaultIndex}
+            currentFilePath={fileName}
+            content={content}
+            onSelectFile={handleSelectFile}
+            onSelectHeading={handleSelectHeading}
+            onRemoveVault={handleRemoveVault}
+            onNewWindow={handleNewWindow}
+            onOpenInNewPanel={handleOpenInNewPanel}
+            canOpenInNewPanel={!!fileName && isCurrentFileMarkdown && !canvasFilePath && !previewFilePath && !graphViewOpen}
+            onPublish={handlePublish}
+            onSelectVault={setActiveVaultIndex}
+            collapsed={!rightSidebarOpen}
+            refreshKey={treeRefreshKey}
+            width={rightSidebarWidth}
+            onWidthChange={setRightSidebarWidth}
+            onBookmark={handleShowBookmarkDialog}
+            outlineTrigger={outlineTrigger}
+            side="right"
+            tabs={rightTabs}
+          />
+        )}
       </div>
 
       {/* 快速打开文件弹窗 */}

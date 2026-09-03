@@ -1538,3 +1538,48 @@ html:not(.platform-macos) .sidebar-header {
   background: rgba(128, 128, 128, 0.15);
   margin: 2px 0;
 }
+
+/* ========== 右侧栏镜像 ========== */
+/* 左侧栏 border-right；右侧栏镜像为 border-left，resize handle 也挪到左缘 */
+.sidebar.sidebar-right {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.sidebar.sidebar-right .sidebar-resize-handle {
+  left: -4px;
+  right: auto;
+}
+
+/* macOS 红绿灯占位仅在左栏顶部生效；右栏顶栏留 0 高度，与 Windows/Linux 一致 */
+html.platform-macos .sidebar.sidebar-right .sidebar-topbar {
+  height: 0;
+  overflow: hidden;
+  padding-left: 0;
+}
+
+/* ── 空状态：本侧栏未分配任何 tab ── */
+.sidebar-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sidebar-empty-icon {
+  opacity: 0.45;
+}
+
+.sidebar-empty-text {
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 200px;
+}

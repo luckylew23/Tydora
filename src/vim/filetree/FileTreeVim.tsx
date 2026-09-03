@@ -28,13 +28,15 @@ export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): Compon
       const activate = () => { treeActiveRef.current = true; };
 
       const handleClick = (e: MouseEvent) => {
-        const tree = document.querySelector(".sidebar-tree");
-        const sidebar = document.querySelector(".sidebar");
-        const target = e.target as Node;
+        // 用 closest 定位点击所在的 sidebar / sidebar-tree，确保两个侧栏各自独立激活
+        const target = e.target as HTMLElement | null;
+        if (!target) return;
+        const tree = target.closest<HTMLElement>(".sidebar-tree");
+        const sidebar = target.closest<HTMLElement>(".sidebar");
         if ((tree && tree.contains(target)) || (sidebar && sidebar.contains(target))) {
           activate();
           // 真实点击某个 tree-node → 把 Vim 光标对齐到该节点（之后 j/k 从这里起步）
-          const tn = (target as HTMLElement)?.closest?.<HTMLElement>(".tree-node[data-path]");
+          const tn = target.closest?.<HTMLElement>(".tree-node[data-path]");
           if (tn?.dataset.path) act("highlight-path", { path: tn.dataset.path });
         } else {
           treeActiveRef.current = false;
@@ -42,10 +44,10 @@ export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): Compon
       };
 
       const handleFocus = (e: FocusEvent) => {
-        const tree = document.querySelector(".sidebar-tree");
-        const sidebar = document.querySelector(".sidebar");
         const el = e.target as Node | null;
         if (!el) return;
+        const tree = (el as HTMLElement)?.closest?.(".sidebar-tree");
+        const sidebar = (el as HTMLElement)?.closest?.(".sidebar");
         if ((tree && tree.contains(el)) || (sidebar && sidebar.contains(el))) activate();
       };
 
@@ -58,12 +60,15 @@ export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): Compon
         // 上下文菜单或弹窗已开时：不拦截
         if (document.querySelector(".context-menu, .modal, [role='dialog']")) return;
 
-        const tree = document.querySelector<HTMLElement>(".sidebar-tree");
+        // 用当前焦点所在的 sidebar 找它的 tree（支持左右两个侧栏，而不是全局第一个）
+        const sidebarEl = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>(".sidebar")
+          ?? document.querySelector<HTMLElement>(".sidebar");
+        if (!sidebarEl) return;
+        const tree = sidebarEl.querySelector<HTMLElement>(".sidebar-tree");
         if (!tree) return;
 
-        const sidebarEl = document.querySelector(".sidebar") as HTMLElement | null;
         const activated = treeActiveRef.current
-          || (sidebarEl && (sidebarEl.contains(document.activeElement) || sidebarEl === document.activeElement));
+          || (sidebarEl.contains(document.activeElement) || sidebarEl === document.activeElement);
         if (!activated) return;
 
         // 焦点仍在编辑器中：不拦截（即使侧栏刚被 click 激活，只要用户又点回编辑器就应该让编辑器 Vim 接手）
@@ -194,6 +199,21 @@ export function FileTreeVim<P extends object>(Wrapped: ComponentType<P>): Compon
               handled = false;
               break;
           }
+        } else if (e.ctrlKey && !e.altKey && !e.metaKey) {
+          // 侧栏文件树半页滚动：Ctrl+D 下翻 / Ctrl+U 上翻（仅侧栏激活时）。
+          // 编辑器持有焦点时 line 59 的 contentEditable 守卫已 return，不会走到这里，
+          // 因此不会与编辑器 Vim 的 Ctrl+D/U 翻页冲突。
+          const k = key.toLowerCase();
+          if (k === "d" || k === "u") {
+            const half = Math.max(40, Math.floor(tree.clientHeight / 2));
+            tree.scrollBy({ top: k === "d" ? half : -half });
+            handled = true;
+          } else {
+            handled = false;
+          }
+        } else {
+          // 其它带修饰键（Alt/Meta）的组合：文件树不处理，交给编辑器 / 全局快捷键。
+          handled = false;
         }
 
         // gg → 首项（g-pending 窗口内再按一次 g）

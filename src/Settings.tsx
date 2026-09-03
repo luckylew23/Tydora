@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent, type CSSProperties } from "react";
+import React, { useState, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent, type CSSProperties } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { availableMonitors } from "@tauri-apps/api/window";
@@ -105,6 +105,10 @@ export function loadEditorSettings(): EditorSettings {
 /** 代码块工具栏样式：minimal = 右上角浮动语言选择；classic = 顶栏 + 复制/删除 */
 export type CodeBlockToolbarStyle = "minimal" | "classic";
 
+export type SidebarTab = "files" | "search" | "outline" | "bookmarks";
+export type SidebarSide = "left" | "right";
+export type SidebarTabPlacement = Record<SidebarTab, SidebarSide>;
+
 interface GeneralSettings {
   appearance: "system" | "light" | "dark";
   fontSize: number;
@@ -129,6 +133,8 @@ interface GeneralSettings {
   codeBlockToolbarStyle: CodeBlockToolbarStyle;
   /** 菜单项高度密度 */
   menuDensity: MenuDensity;
+  /** 侧栏 tab 在左/右侧栏的分配 */
+  sidebarTabPlacement: SidebarTabPlacement;
 }
 
 interface ShortcutItem {
@@ -140,7 +146,7 @@ interface ShortcutItem {
 
 // ── Default values ──────────────────────────────────────────────────
 
-const DEFAULT_GENERAL: GeneralSettings = {
+export const DEFAULT_GENERAL: GeneralSettings = {
   appearance: "system",
   fontSize: 16,
   editorFont: "system",
@@ -158,6 +164,12 @@ const DEFAULT_GENERAL: GeneralSettings = {
   expandOutlineOnOpen: true,
   codeBlockToolbarStyle: "minimal",
   menuDensity: "compact",
+  sidebarTabPlacement: {
+    files: "left",
+    search: "left",
+    outline: "right",
+    bookmarks: "right",
+  },
 };
 
 interface MindmapSettings {
@@ -200,6 +212,29 @@ const DEFAULT_GRAPH: GraphSettings = {
 
 // 默认快捷键统一从 src/config/shortcuts.json 读取（设置面板中的自定义仍存储在 localStorage）
 const DEFAULT_SHORTCUTS: ShortcutItem[] = shortcutsConfig.editor as ShortcutItem[];
+
+const ALL_SIDEBAR_TABS: SidebarTab[] = ["files", "search", "outline", "bookmarks"];
+
+function normalizeSidebarTabPlacement(raw: unknown): SidebarTabPlacement {
+  const base = { ...DEFAULT_GENERAL.sidebarTabPlacement };
+  if (!raw || typeof raw !== "object") return base;
+  const src = raw as Partial<Record<SidebarTab, unknown>>;
+  for (const tab of ALL_SIDEBAR_TABS) {
+    const v = src[tab];
+    if (v === "left" || v === "right") base[tab] = v;
+  }
+  return base;
+}
+
+/** 根据分配计算指定侧的 tab 列表，顺序固定 files→search→outline→bookmarks */
+export function sidebarTabsForSide(
+  placement: SidebarTabPlacement,
+  side: SidebarSide,
+): SidebarTab[] {
+  return ALL_SIDEBAR_TABS.filter((t) => placement[t] === side);
+}
+
+export { ALL_SIDEBAR_TABS };
 
 // ── Storage keys ────────────────────────────────────────────────────
 
@@ -510,6 +545,80 @@ function GeneralSettingsContent({
             <span className="settings-switch-slider" />
           </label>
         </div>
+      </div>
+
+      <div className="canvas-settings-card sidebar-settings-card">
+        <div className="sidebar-settings-card-header">
+          <h3 className="settings-section-title">{t("settings.sidebar.title")}</h3>
+          <p className="sidebar-settings-card-desc">{t("settings.sidebar.desc")}</p>
+        </div>
+        {ALL_SIDEBAR_TABS.map((tab, idx) => {
+          const showDivider = idx === 1; // files|search 与 outline|bookmarks 之间的分组线
+          return (
+            <div key={tab}>
+              {showDivider && <div className="sidebar-settings-divider" />}
+              <div className="canvas-settings-row sidebar-settings-row">
+                <div className="canvas-settings-row-label sidebar-settings-label">
+                  <div className="sidebar-settings-icon">
+                    {tab === "files" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                    )}
+                    {tab === "search" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      </svg>
+                    )}
+                    {tab === "outline" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="8" y1="6" x2="21" y2="6" />
+                        <line x1="8" y1="12" x2="21" y2="12" />
+                        <line x1="8" y1="18" x2="21" y2="18" />
+                        <line x1="3" y1="6" x2="3.01" y2="6" />
+                        <line x1="3" y1="12" x2="3.01" y2="12" />
+                        <line x1="3" y1="18" x2="3.01" y2="18" />
+                      </svg>
+                    )}
+                    {tab === "bookmarks" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <span className="canvas-settings-row-title">{t(`settings.sidebar.${tab}`)}</span>
+                    <span className="canvas-settings-row-desc">
+                      {settings.sidebarTabPlacement[tab] === "left"
+                        ? t("settings.sidebar.left")
+                        : t("settings.sidebar.right")}
+                    </span>
+                  </div>
+                </div>
+                <div className="canvas-settings-row-control">
+                  <SettingsSelect
+                    value={settings.sidebarTabPlacement[tab]}
+                    onChange={(v) =>
+                      onChange({
+                        ...settings,
+                        sidebarTabPlacement: {
+                          ...settings.sidebarTabPlacement,
+                          [tab]: v as SidebarSide,
+                        },
+                      })
+                    }
+                    options={[
+                      { value: "left", label: t("settings.sidebar.left") },
+                      { value: "right", label: t("settings.sidebar.right") },
+                    ]}
+                    minWidth={128}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2940,6 +3049,7 @@ export default function Settings() {
           typeof parsed.codeLineHeight === "number"
             ? Math.min(2.4, Math.max(1.2, Math.round(parsed.codeLineHeight * 10) / 10))
             : DEFAULT_GENERAL.codeLineHeight,
+        sidebarTabPlacement: normalizeSidebarTabPlacement(parsed.sidebarTabPlacement),
       };
     } catch {
       return DEFAULT_GENERAL;
