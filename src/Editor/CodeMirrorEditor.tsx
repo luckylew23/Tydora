@@ -900,6 +900,8 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
             to: viewRef.current.state.doc.length,
             insert: value,
           },
+          // 文件切换时重置光标到文档开头，避免后续 focus() 将旧选区位置滚动到视图中
+          selection: fileChanged ? { anchor: 0 } : undefined,
         });
         // 文件切换时重置滚动位置到顶部
         if (fileChanged) {

@@ -2226,6 +2226,10 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         // 文件切换或从 SV 切换回 IR 时强制更新内容
         isInternalRef.current = true;
         editor.commands.setContent(value);
+        // setContent 默认把选区放到文档末尾。后续 openFile 在 60ms 后调用 focus()，
+        // ProseMirror 会把当前选区滚动到视图中 → 光标在末尾就导致跳到底部。
+        // 重置光标到文档开头，使 focus() 不再向下滚动。
+        editor.commands.setTextSelection(1);
         // 文件切换时重置滚动位置到顶部
         requestAnimationFrame(() => {
           const scrollContainer = containerRef.current?.querySelector('.tiptap-editor');
