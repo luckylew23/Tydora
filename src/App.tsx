@@ -322,14 +322,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     }
     return false;
   };
-  const appLeader = useLeader({
-    enabled: vimEnabled,
-    triggerKey: vimLeaderKey,
-    timeout: vimMenuTimeout,
-    // 欢迎面板时无编辑器，视 Vim mode 为 normal（即只要 Vim 功能开启就可以使用 Leader）
-    active: vimMode !== "insert",
-    dispatchAction: appLeaderDispatch,
-  });
+  // appLeader 的声明位置：在 isActiveTerminal/isCurrentFileMarkdown/fileName 之后（见下方）
   /**
    * 在 Vim 开启且当前 vim 模态不是 insert 时，若焦点在编辑器（ProseMirror/CodeMirror）内
    * 或在 vim 管理的富文本节点内，让快捷键让渡给 vim 扩展。
@@ -455,6 +448,16 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const fontSizeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [wordCount, setWordCount] = useState(0);
   const [isCurrentFileMarkdown, setIsCurrentFileMarkdown] = useState(true);
+
+  // App 级 Leader 菜单：仅在激活窗格不是编辑器（终端/欢迎面板）时生效，
+  // 避免与 TipTap/CodeMirror 内部的 Leader 重复触发（导致 app.* 动作被派发两次互相抵消）
+  const appLeader = useLeader({
+    enabled: vimEnabled,
+    triggerKey: vimLeaderKey,
+    timeout: vimMenuTimeout,
+    active: vimMode !== "insert" && (isActiveTerminal || !isCurrentFileMarkdown || !fileName),
+    dispatchAction: appLeaderDispatch,
+  });
   const codeMirrorRef = useRef<CodeMirrorEditorHandle>(null);
 
   // 匿名统计：首次启动弹窗征得同意后才会上报（未选择前不发送任何数据）

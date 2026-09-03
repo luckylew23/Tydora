@@ -3120,7 +3120,7 @@ export default function Sidebar({
       </div>
 
       {activeTab === "files" && (
-        <div ref={filesPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0 }}>
+        <div ref={filesPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           {activeVault ? (
             <FileTree
               key={activeVault.path}
@@ -3164,13 +3164,13 @@ export default function Sidebar({
       )}
 
       {activeTab === "outline" && (
-        <div ref={outlinePanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0 }}>
+        <div ref={outlinePanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <Outline content={content} onSelectHeading={onSelectHeading} />
         </div>
       )}
 
       {activeTab === "bookmarks" && (
-        <div ref={bookmarksPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0 }}>
+        <div ref={bookmarksPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <BookmarksPanel
             vaultPath={activeVault?.path ?? null}
             vaults={vaults}

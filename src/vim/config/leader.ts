@@ -21,10 +21,11 @@ export const leaderConfig: LeaderConfig = {
     // 文件操作
     { key: "e", label: "文件树", action: "app.toggle-sidebar" },
     { key: " ", label: "打开文件", action: "app.quick-open" },
+    { key: "o", label: "打开文件", action: "app.quick-open" },
     { key: "s", label: "全局搜索", action: "app.global-search" },
 
     // 视图
-    { key: "M", label: "模式切换", action: "app.toggle-mode" },
+    { key: "m", label: "模式切换", action: "app.toggle-mode" },
 
     // 分屏
     { key: "\\", label: "水平分屏", action: "app.split-horizontal" },
@@ -43,5 +44,6 @@ export const leaderConfig: LeaderConfig = {
 
     // 其他
     { key: "/", label: "命令面板", action: "app.command-palette" },
+    { key: "p", label: "命令面板", action: "app.command-palette" },
   ],
 };
