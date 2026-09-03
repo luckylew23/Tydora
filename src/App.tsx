@@ -3876,21 +3876,21 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </div>
                 )}
               </div>
-              {/* 右侧栏折叠/展开按钮：紧挨"更多"按钮右侧 */}
+              {/* 右侧栏折叠/展开按钮：紧挨"更多"按钮右侧，样式与左侧栏按钮一致 */}
               <button
-                className="window-control-btn"
+                className="sidebar-toggle-btn"
                 onClick={handleRightSidebarToggle}
                 title={rightSidebarOpen ? t("app.toolbar.collapseRightSidebar") : t("app.toolbar.expandRightSidebar")}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.4" />
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1.5" y="1.5" width="15" height="15" rx="2" stroke="currentColor" strokeWidth="1.4" />
                   {rightSidebarOpen ? (
                     <>
-                      <rect x="15" y="4" width="5" height="16" rx="1" fill="currentColor" opacity="0.25" />
-                      <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" strokeWidth="1.2" />
+                      <rect x="10.5" y="2.5" width="5" height="13" rx="1" fill="currentColor" opacity="0.25" />
+                      <line x1="10.5" y1="2.5" x2="10.5" y2="15.5" stroke="currentColor" strokeWidth="1.2" />
                     </>
                   ) : (
-                    <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" strokeWidth="1.2" />
+                    <line x1="10.5" y1="2.5" x2="10.5" y2="15.5" stroke="currentColor" strokeWidth="1.2" />
                   )}
                 </svg>
               </button>

@@ -84,6 +84,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS: 让 Tauri bundler 检测到 CI 环境，向 bundle_dmg.sh 传 --skip-jenkins，
+          # 跳过 AppleScript/Finder 步骤（该步骤在 CI 上常因 window server 无响应而超时失败）
+          TAURI_BUNDLER_DMG_IGNORE_CI: false
         with:
           args: ${{ matrix.args }}
 
