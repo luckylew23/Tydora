@@ -793,6 +793,14 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     () => sidebarTabsForSide(sidebarTabPlacement, "right"),
     [sidebarTabPlacement],
   );
+
+  // 右侧栏 tab 全部移走时，自动关闭右侧栏（否则按钮隐藏但侧栏还显示）
+  useEffect(() => {
+    if (rightTabs.length === 0 && rightSidebarOpen) {
+      setRightSidebarOpen(false);
+    }
+  }, [rightTabs, rightSidebarOpen]);
+
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
   const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
@@ -3876,24 +3884,26 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                   </div>
                 )}
               </div>
-              {/* 右侧栏折叠/展开按钮：紧挨"更多"按钮右侧，样式与左侧栏按钮一致 */}
-              <button
-                className="sidebar-toggle-btn"
-                onClick={handleRightSidebarToggle}
-                title={rightSidebarOpen ? t("app.toolbar.collapseRightSidebar") : t("app.toolbar.expandRightSidebar")}
-              >
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="1.5" y="1.5" width="15" height="15" rx="2" stroke="currentColor" strokeWidth="1.4" />
-                  {rightSidebarOpen ? (
-                    <>
-                      <rect x="10.5" y="2.5" width="5" height="13" rx="1" fill="currentColor" opacity="0.25" />
+              {/* 右侧栏折叠/展开按钮：紧挨"更多"按钮右侧，仅当有 tab 配置在右侧栏时显示 */}
+              {rightTabs.length > 0 && (
+                <button
+                  className="sidebar-toggle-btn"
+                  onClick={handleRightSidebarToggle}
+                  title={rightSidebarOpen ? t("app.toolbar.collapseRightSidebar") : t("app.toolbar.expandRightSidebar")}
+                >
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="1.5" y="1.5" width="15" height="15" rx="2" stroke="currentColor" strokeWidth="1.4" />
+                    {rightSidebarOpen ? (
+                      <>
+                        <rect x="10.5" y="2.5" width="5" height="13" rx="1" fill="currentColor" opacity="0.25" />
+                        <line x1="10.5" y1="2.5" x2="10.5" y2="15.5" stroke="currentColor" strokeWidth="1.2" />
+                      </>
+                    ) : (
                       <line x1="10.5" y1="2.5" x2="10.5" y2="15.5" stroke="currentColor" strokeWidth="1.2" />
-                    </>
-                  ) : (
-                    <line x1="10.5" y1="2.5" x2="10.5" y2="15.5" stroke="currentColor" strokeWidth="1.2" />
-                  )}
-                </svg>
-              </button>
+                    )}
+                  </svg>
+                </button>
+              )}
               <div className="window-controls-divider window-controls-native" />
               <button className="window-control-btn window-controls-native" onClick={handleMinimize} title={t("app.toolbar.minimize")}>
                 <svg width="10" height="10" viewBox="0 0 10 10">
