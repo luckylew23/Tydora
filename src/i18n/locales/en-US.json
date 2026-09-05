@@ -1118,6 +1118,7 @@
     "openVaultFirst": "Please open a vault first",
     "done": "Publish complete!",
     "previewSite": "Preview Site",
+    "stopPreview": "Stop Preview",
     "openOutputDir": "Open Output Directory",
     "building": "Building static site...",
     "buildingDesc": "Building with markdown-publish",

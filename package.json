@@ -27,7 +27,7 @@
     "lint:commit": "commitlint --from HEAD~1"
   },
   "dependencies": {
-    "@abstractwebunit/markdown-publish": "^1.0.6",
+    "@abstractwebunit/markdown-publish": "file:./vendor/markdown-publish",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-cpp": "^6.0.3",

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useLayoutEffect, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useLayoutEffect, useMemo, lazy, Suspense, type ReactNode } from "react";
 import { bootStart, bootEnd, bootStamp } from "./boot-timing";
 bootStamp("sidebar_module_imported");
 import { useTranslation } from "react-i18next";
@@ -15,6 +15,9 @@ import { relativePath as computeRelativePath } from "./services/ImageManager";
 import { BookmarksPanel } from "./Bookmarks";
 import { type SidebarTab } from "./Settings";
 import "./Sidebar.css";
+
+// 大纲标签页顶部的本地图谱：d3 依赖较重，动态加载避免拖慢首屏
+const LocalGraphLazy = lazy(() => import("./graph/LocalGraph").then((m) => ({ default: m.LocalGraph })));
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -85,6 +88,8 @@ interface SidebarProps {
   onSelectVault: (index: number) => void;
   collapsed: boolean;
   refreshKey: number;
+  /** 链接索引刷新计数：本地图谱 / Linked references 依赖它重绘 */
+  graphRefreshKey?: number;
   width: number;
   onWidthChange: (width: number) => void;
   onBookmark: (filePath: string, isDirectory: boolean) => void;
@@ -93,6 +98,10 @@ interface SidebarProps {
   side?: "left" | "right";
   /** 本侧栏渲染哪些 tab（顺序固定 files→search→outline→bookmarks）；空数组则显示空状态 */
   tabs?: SidebarTab[];
+  /** 打开全局关系图谱 */
+  onOpenGlobalGraph?: () => void;
+  /** 全局关系图谱是否已打开（用于按钮激活态） */
+  graphViewOpen?: boolean;
 }
 
 interface ContextMenuItem {
@@ -1423,6 +1432,8 @@ function FileTree({
   const treeRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef(0);
   const pendingRevealPathRef = useRef<string | null>(null);
+  // 刷新（loadRoot/handleReload）前保存的滚动位置，渲染后恢复，避免自动刷新导致跳回顶部
+  const pendingScrollTopRef = useRef<number | null>(null);
 
   const scrollToPath = useCallback((path: string) => {
     const node = treeRef.current?.querySelector(`[data-path="${CSS.escape(path)}"]`);
@@ -1489,6 +1500,7 @@ function FileTree({
   }, []);
 
   const loadRoot = useCallback(async () => {
+    pendingScrollTopRef.current = treeRef.current?.scrollTop ?? null;
     bootStart("sidebar_load_root");
     bootStamp("sidebar_load_dir_start");
     const nodes = await loadDirectory(rootPath);
@@ -1510,6 +1522,7 @@ function FileTree({
   }, []);
 
   const handleReload = useCallback(async (expandPath?: string | string[]) => {
+    pendingScrollTopRef.current = treeRef.current?.scrollTop ?? null;
     invalidateFileCache(rootPath);
     const paths = collectExpanded(rootNodesRef.current);
     if (expandPath) {
@@ -1560,6 +1573,24 @@ function FileTree({
     pendingRevealPathRef.current = null;
     scrollToPath(pending);
   }, [rootNodes, scrollToPath]);
+
+  // 刷新后恢复滚动位置：loadRoot/handleReload 在 setRootNodes 前保存了 scrollTop，
+  // 渲染完成后在此处恢复，避免自动刷新导致文件树跳回顶部。
+  // 若有待 reveal 的文件（pendingRevealPathRef），则交给 reveal 逻辑滚动，不恢复。
+  useLayoutEffect(() => {
+    const st = pendingScrollTopRef.current;
+    if (st == null || !treeRef.current) return;
+    if (pendingRevealPathRef.current) {
+      pendingScrollTopRef.current = null;
+      return;
+    }
+    pendingScrollTopRef.current = null;
+    const el = treeRef.current;
+    // 等待一帧确保 DOM 布局完成，再恢复滚动位置
+    requestAnimationFrame(() => {
+      if (el) el.scrollTop = st;
+    });
+  }, [rootNodes]);
 
   // ── Collapse all / Expand all ──
   const hasExpandedDir = useMemo(() => {
@@ -2706,6 +2737,91 @@ function Outline({
   );
 }
 
+// ── Linked References（大纲面板底部：列出当前打开的笔记中包含的 wiki 链接/出链）──
+
+/** 与文件树一致的系统分隔符（Windows 用反斜杠，其它用正斜杠） */
+function refNativeSeparator(): string {
+  return navigator.platform?.toLowerCase().includes("win") ? "\\" : "/";
+}
+
+/** 把任意书写风格的路径统一成系统原生分隔符，保证与文件树/编辑器路径可比对 */
+function refToNativePath(p: string): string {
+  return refNativeSeparator() === "\\" ? p.replace(/\//g, "\\") : p.replace(/\\/g, "/");
+}
+
+interface LinkedRefItem {
+  raw: string;
+  path: string;
+  label: string;
+  valid: boolean;
+}
+
+/** 从链接目标提取文件名：去路径、去扩展名（如 Notes/Mind-Map.md → Mind-Map） */
+function linkFileName(raw: string): string {
+  const seg = raw.replace(/\\/g, "/").split("/").pop() ?? raw;
+  const hashIdx = seg.indexOf("#");
+  const core = hashIdx >= 0 ? seg.slice(0, hashIdx) : seg;
+  return core.replace(/\.[^.]+$/, "");
+}
+
+function LinkedReferences({
+  vaultPath,
+  filePath,
+  refreshTick,
+  onSelectFile,
+}: {
+  vaultPath: string;
+  filePath: string;
+  refreshTick?: number;
+  onSelectFile: (path: string) => void;
+}) {
+  // 本面板展示当前文档里的 wiki 链接（[[...]] 出链）：按出现顺序去重，
+  // 统一显示链接目标的文件名；点击跳转到目标文件。
+  const items = useMemo<LinkedRefItem[]>(() => {
+    if (!vaultPath || !filePath) return [];
+    const seen = new Set<string>();
+    const result: LinkedRefItem[] = [];
+    for (const target of LinkIndexService.getOutlinksForFile(filePath)) {
+      if (!target) continue;
+      const found = LinkIndexService.resolveTargetPath(target);
+      const resolved = found ? refToNativePath(found) : "";
+      const label = linkFileName(target);
+      const key = resolved ? resolved.toLowerCase() : label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({ raw: target, path: resolved, label, valid: Boolean(resolved) });
+    }
+    return result;
+  }, [vaultPath, filePath, refreshTick]);
+
+  if (items.length === 0) {
+    return <div className="inspector-empty">No links in this note</div>;
+  }
+  return (
+    <div className="linked-refs">
+      {items.map((it) => (
+        <button
+          key={it.path || it.raw}
+          type="button"
+          className="linked-ref"
+          title={it.valid ? it.path : `[[${it.label}]]（未找到对应文件）`}
+          onClick={() => {
+            // 优先用缓存路径；点击时再解析一次兜底（索引可能刚更新）
+            let target = it.path;
+            if (!target) {
+              const found = LinkIndexService.resolveTargetPath(it.raw);
+              if (found) target = refToNativePath(found);
+            }
+            if (target) onSelectFile(target);
+          }}
+        >
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── VaultSwitcher ────────────────────────────────────────────────────
 
 function VaultSwitcher({
@@ -2908,12 +3024,15 @@ export default function Sidebar({
   onSelectVault,
   collapsed,
   refreshKey,
+  graphRefreshKey,
   width,
   onWidthChange,
   onBookmark,
   outlineTrigger,
   side = "left",
   tabs,
+  onOpenGlobalGraph,
+  graphViewOpen = false,
 }: SidebarProps) {
   bootStart("sidebar_component_render");
   bootStamp("sidebar_component_entered");
@@ -2928,6 +3047,18 @@ export default function Sidebar({
     visibleTabs[0] ?? "files",
   );
   const [searchQuery, setSearchQuery] = useState("");
+  // 局部关系图谱放大弹窗
+  const [localGraphExpanded, setLocalGraphExpanded] = useState(false);
+
+  // ESC 关闭局部图谱弹窗
+  useEffect(() => {
+    if (!localGraphExpanded) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLocalGraphExpanded(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [localGraphExpanded]);
   // Trigger re-render on language change
   useTranslation();
 
@@ -3120,56 +3251,58 @@ export default function Sidebar({
     >
       <div className="sidebar-topbar" data-tauri-drag-region="deep" />
 
-      <div className="sidebar-header">
-        <div className="sidebar-tabs-wrapper">
-          {visibleTabs.includes("files") && (
-            <button
-              className={`sidebar-tab${activeTab === "files" ? " active" : ""}`}
-              onClick={() => switchTab("files")}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-          )}
-          {visibleTabs.includes("search") && (
-            <button
-              className={`sidebar-tab${activeTab === "search" ? " active" : ""}`}
-              onClick={() => switchTab("search")}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8" />
-                <path d="M21 21l-4.35-4.35" />
-              </svg>
-            </button>
-          )}
-          {visibleTabs.includes("outline") && (
-            <button
-              className={`sidebar-tab${activeTab === "outline" ? " active" : ""}`}
-              onClick={() => switchTab("outline")}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="8" y1="6" x2="21" y2="6" />
-                <line x1="8" y1="12" x2="21" y2="12" />
-                <line x1="8" y1="18" x2="21" y2="18" />
-                <line x1="3" y1="6" x2="3.01" y2="6" />
-                <line x1="3" y1="12" x2="3.01" y2="12" />
-                <line x1="3" y1="18" x2="3.01" y2="18" />
-              </svg>
-            </button>
-          )}
-          {visibleTabs.includes("bookmarks") && (
-            <button
-              className={`sidebar-tab${activeTab === "bookmarks" ? " active" : ""}`}
-              onClick={() => switchTab("bookmarks")}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-          )}
+      {visibleTabs.length > 1 && (
+        <div className="sidebar-header">
+          <div className="sidebar-tabs-wrapper">
+            {visibleTabs.includes("files") && (
+              <button
+                className={`sidebar-tab${activeTab === "files" ? " active" : ""}`}
+                onClick={() => switchTab("files")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+            )}
+            {visibleTabs.includes("search") && (
+              <button
+                className={`sidebar-tab${activeTab === "search" ? " active" : ""}`}
+                onClick={() => switchTab("search")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" />
+                </svg>
+              </button>
+            )}
+            {visibleTabs.includes("outline") && (
+              <button
+                className={`sidebar-tab${activeTab === "outline" ? " active" : ""}`}
+                onClick={() => switchTab("outline")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="8" y1="6" x2="21" y2="6" />
+                  <line x1="8" y1="12" x2="21" y2="12" />
+                  <line x1="8" y1="18" x2="21" y2="18" />
+                  <line x1="3" y1="6" x2="3.01" y2="6" />
+                  <line x1="3" y1="12" x2="3.01" y2="12" />
+                  <line x1="3" y1="18" x2="3.01" y2="18" />
+                </svg>
+              </button>
+            )}
+            {visibleTabs.includes("bookmarks") && (
+              <button
+                className={`sidebar-tab${activeTab === "bookmarks" ? " active" : ""}`}
+                onClick={() => switchTab("bookmarks")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {visibleTabs.length === 0 ? (
         <div className="sidebar-empty">
@@ -3229,7 +3362,67 @@ export default function Sidebar({
 
           {activeTab === "outline" && (
             <div ref={outlinePanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-              <Outline content={content} onSelectHeading={onSelectHeading} />
+              {activeVault && currentFilePath ? (
+                <div className="sidebar-inspector">
+                  <section className="inspector-section">
+                    <div className="inspector-section-header">
+                      <h3 className="inspector-section-title">Graph</h3>
+                      <div className="inspector-section-actions">
+                        <button
+                          className={`inspector-icon-btn${localGraphExpanded ? " active" : ""}`}
+                          title="Open local graph"
+                          onClick={() => setLocalGraphExpanded((prev) => !prev)}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="5" r="3" />
+                            <circle cx="4" cy="19" r="3" />
+                            <circle cx="20" cy="19" r="3" />
+                            <line x1="9.5" y1="6.5" x2="5.5" y2="16.5" />
+                            <line x1="14.5" y1="6.5" x2="18.5" y2="16.5" />
+                            <line x1="7" y1="19" x2="17" y2="19" />
+                          </svg>
+                        </button>
+                        <button
+                          className={`inspector-icon-btn${graphViewOpen ? " active" : ""}`}
+                          title="Open global graph"
+                          onClick={() => onOpenGlobalGraph?.()}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M7 17 17 7" />
+                            <path d="M7 7h10v10" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <Suspense fallback={<div className="local-graph-loading" />}>
+                      <LocalGraphLazy
+                        vaultPath={activeVault.path}
+                        filePath={currentFilePath}
+                        refreshTick={graphRefreshKey ?? 0}
+                        onSelectFile={handleSelectFile}
+                      />
+                    </Suspense>
+                  </section>
+                  <section className="inspector-section">
+                    <h3 className="inspector-section-title">On this page</h3>
+                    <Outline content={content} onSelectHeading={onSelectHeading} />
+                  </section>
+                  <section className="inspector-section">
+                    <h3 className="inspector-section-title">Linked references</h3>
+                    <LinkedReferences
+                      vaultPath={activeVault.path}
+                      filePath={currentFilePath}
+                      refreshTick={graphRefreshKey ?? 0}
+                      onSelectFile={handleSelectFile}
+                    />
+                  </section>
+                </div>
+              ) : (
+                <div className="sidebar-tree">
+                  <div className="tree-empty">{i18n.t("sidebar.outline.untitled")}</div>
+                  <div className="tree-empty-hint">{i18n.t("sidebar.outline.hint")}</div>
+                </div>
+              )}
             </div>
           )}
 
@@ -3256,6 +3449,36 @@ export default function Sidebar({
 
       {!collapsed && (
         <div className="sidebar-resize-handle" onMouseDown={handleMouseDown} />
+      )}
+
+      {/* 局部关系图谱放大弹窗 */}
+      {localGraphExpanded && activeVault && currentFilePath && (
+        <div className="graph-modal-overlay" onClick={() => setLocalGraphExpanded(false)}>
+          <div className="graph-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="graph-modal-header">
+              <span className="graph-modal-title">Local Graph</span>
+              <button className="graph-modal-close" onClick={() => setLocalGraphExpanded(false)} title="Close">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="graph-modal-body">
+              <Suspense fallback={<div className="local-graph-loading" />}>
+                <LocalGraphLazy
+                  vaultPath={activeVault.path}
+                  filePath={currentFilePath}
+                  refreshTick={graphRefreshKey ?? 0}
+                  onSelectFile={(path) => {
+                    handleSelectFile(path);
+                    setLocalGraphExpanded(false);
+                  }}
+                />
+              </Suspense>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

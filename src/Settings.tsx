@@ -167,7 +167,7 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   sidebarTabPlacement: {
     files: "left",
     search: "left",
-    outline: "left",
+    outline: "right",
     bookmarks: "left",
   },
 };

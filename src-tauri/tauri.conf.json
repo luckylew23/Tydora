@@ -45,6 +45,9 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
+    "resources": {
+      "../vendor/markdown-publish": "markdown-publish"
+    },
     "fileAssociations": [
       {
         "ext": [
