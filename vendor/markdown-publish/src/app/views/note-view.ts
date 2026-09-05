@@ -86,7 +86,7 @@ import { SeoService, excerptFromMarkdown } from '../seo/seo.service';
         font-weight: 700;
         line-height: 1.2;
         letter-spacing: -0.015em;
-        color: var(--text-normal);
+        color: var(--global--text-normal);
       }
 
       .note-aside {
@@ -101,7 +101,7 @@ import { SeoService, excerptFromMarkdown } from '../seo/seo.service';
 
       .note-error {
         padding: 32px 48px;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
       }
 
       /* Hover page preview (Obsidian-style) */
@@ -113,9 +113,9 @@ import { SeoService, excerptFromMarkdown } from '../seo/seo.service';
         overflow-y: auto;
         padding: 14px 20px;
         box-sizing: border-box;
-        border: 1px solid var(--background-modifier-border);
+        border: 1px solid var(--global--background-modifier-border);
         border-radius: 8px;
-        background: var(--background-primary);
+        background: var(--global--background-primary);
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
       }
 

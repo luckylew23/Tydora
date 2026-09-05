@@ -57,7 +57,7 @@ import { ThemeService } from './theme.service';
         width: 46px;
         height: 24px;
         border-radius: 12px;
-        background: var(--background-modifier-border);
+        background: var(--global--background-modifier-border);
         transition: background 120ms ease;
       }
 
@@ -66,7 +66,7 @@ import { ThemeService } from './theme.service';
         position: absolute;
         top: 50%;
         transform: translateY(-50%);
-        color: var(--text-faint);
+        color: var(--global--text-faint);
         pointer-events: none;
       }
 
@@ -87,8 +87,8 @@ import { ThemeService } from './theme.service';
         width: 20px;
         height: 20px;
         border-radius: 50%;
-        background: var(--background-primary);
-        color: var(--text-normal);
+        background: var(--global--background-primary);
+        color: var(--global--text-normal);
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
         transition: transform 150ms ease;
       }

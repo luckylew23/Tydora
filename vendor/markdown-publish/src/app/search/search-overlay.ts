@@ -112,18 +112,18 @@ interface PagefindData {
         box-sizing: border-box;
         height: 32px;
         padding: 4px 8px;
-        border: 1px solid var(--background-modifier-border);
+        border: 1px solid var(--global--background-modifier-border);
         border-radius: 5px;
-        background: var(--background-primary);
+        background: var(--global--background-primary);
         cursor: text;
       }
       .search-bar:focus-within {
-        border-color: var(--text-accent);
+        border-color: var(--global--text-accent);
       }
       .search-icon {
         display: inline-flex;
         align-items: center;
-        color: var(--text-faint);
+        color: var(--global--text-faint);
         flex: 0 0 auto;
       }
       .search-input {
@@ -132,13 +132,13 @@ interface PagefindData {
         border: none;
         outline: none;
         background: transparent;
-        color: var(--text-normal);
+        color: var(--global--text-normal);
         font-family: inherit;
         font-size: 14px;
         line-height: 1.4;
       }
       .search-input::placeholder {
-        color: var(--text-faint);
+        color: var(--global--text-faint);
       }
       .search-clear {
         display: inline-flex;
@@ -151,12 +151,12 @@ interface PagefindData {
         border: none;
         border-radius: 4px;
         background: transparent;
-        color: var(--text-faint);
+        color: var(--global--text-faint);
         cursor: pointer;
       }
       .search-clear:hover {
-        background: var(--background-modifier-hover);
-        color: var(--text-normal);
+        background: var(--global--background-modifier-hover);
+        color: var(--global--text-normal);
       }
 
       .search-dropdown {
@@ -166,8 +166,8 @@ interface PagefindData {
         overflow-y: auto;
         padding: 4px;
         box-sizing: border-box;
-        background: var(--background-primary);
-        border: 1px solid var(--background-modifier-border);
+        background: var(--global--background-primary);
+        border: 1px solid var(--global--background-modifier-border);
         border-radius: 8px;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
       }
@@ -183,21 +183,21 @@ interface PagefindData {
         background: transparent;
         text-align: start;
         cursor: pointer;
-        color: var(--text-normal);
+        color: var(--global--text-normal);
       }
       .suggestion.active {
-        background: var(--background-modifier-hover);
+        background: var(--global--background-modifier-hover);
       }
       .suggestion-title {
         font-weight: 600;
         font-size: 0.9rem;
         line-height: 1.3;
-        color: var(--text-normal);
+        color: var(--global--text-normal);
       }
       .suggestion-detail {
         font-size: 0.8rem;
         line-height: 1.4;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
@@ -211,7 +211,7 @@ interface PagefindData {
       }
       .suggestion-empty {
         padding: 10px 12px;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
         font-size: 0.85rem;
       }
     `,

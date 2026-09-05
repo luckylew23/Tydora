@@ -23,10 +23,10 @@ import { CONNECTOR_IMPORTS, CONNECTORS_STYLES, CONNECTORS_TEMPLATE, CanvasNodeBa
         position: relative;
         box-sizing: border-box;
         height: 100%;
-        border: 0.0625rem solid var(--df-node-border-color, var(--background-modifier-border));
+        border: 0.0625rem solid var(--df-node-border-color, var(--global--background-modifier-border));
         border-radius: 0.5rem;
         overflow: hidden;
-        background: var(--background-primary);
+        background: var(--global--background-primary);
       }
 
       img {

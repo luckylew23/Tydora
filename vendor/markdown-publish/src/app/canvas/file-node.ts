@@ -74,9 +74,9 @@ const NEAR_ZOOM = 0.6;
         position: relative;
         box-sizing: border-box;
         height: 100%;
-        border: 0.0625rem solid var(--df-node-border-color, var(--background-modifier-border));
+        border: 0.0625rem solid var(--df-node-border-color, var(--global--background-modifier-border));
         border-radius: 0.5rem;
-        background: var(--background-primary);
+        background: var(--global--background-primary);
         overflow: hidden;
       }
 
@@ -110,7 +110,7 @@ const NEAR_ZOOM = 0.6;
         margin: 0;
         font-size: 0.85rem;
         line-height: 1.4;
-        color: var(--text-muted, inherit);
+        color: var(--global--text-muted, inherit);
         overflow: hidden;
       }
 

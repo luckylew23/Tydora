@@ -4,12 +4,18 @@
 // with the CLI). Falls back to copying public/og-default.png if rendering
 // is unavailable, so a build never fails because of the card.
 import { createRequire } from 'node:module';
-import { writeFileSync, copyFileSync, existsSync } from 'node:fs';
+import { writeFileSync, copyFileSync, existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const distDir = path.resolve('dist/markdown-publish/browser');
 const out = path.join(distDir, 'og.png');
+
+// Load the user's custom icon as base64 for embedding in the OG image.
+const iconPath = path.resolve('public/icon.png');
+const iconData = existsSync(iconPath)
+  ? 'data:image/png;base64,' + readFileSync(iconPath).toString('base64')
+  : null;
 
 const name = (process.env.SITE_NAME ?? '').trim() || 'Notes';
 const description = (process.env.SITE_DESCRIPTION ?? '').trim();
@@ -31,15 +37,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630">
     </radialGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
-  <g transform="translate(90,96) scale(3.4)">
-    <rect width="32" height="32" rx="7" fill="#8a5cf5"/>
-    <g stroke="#ffffff" stroke-width="2" stroke-linecap="round">
-      <path d="M10 11 L16 21 M22 11 L16 21 M10 11 L22 11"/>
-    </g>
-    <g fill="#ffffff">
-      <circle cx="10" cy="11" r="3"/><circle cx="22" cy="11" r="3"/><circle cx="16" cy="21" r="3"/>
-    </g>
-  </g>
+  ${iconData ? `<image href="${iconData}" x="90" y="96" width="108" height="108" rx="16"/>` : ''}
   <text x="90" y="${desc ? 388 : 420}" font-family="Inter" font-size="${titleSize}" font-weight="600" fill="#ffffff">${esc(title)}</text>
   ${desc ? `<text x="90" y="452" font-family="Inter" font-size="32" fill="#b8b6c4">${esc(desc)}</text>` : ''}
 </svg>`;

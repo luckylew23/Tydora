@@ -29,9 +29,9 @@ import { CONNECTOR_IMPORTS, CONNECTORS_STYLES, CONNECTORS_TEMPLATE, CanvasNodeBa
         position: relative;
         box-sizing: border-box;
         height: 100%;
-        border: 0.0625rem solid var(--df-node-border-color, var(--background-modifier-border));
+        border: 0.0625rem solid var(--df-node-border-color, var(--global--background-modifier-border));
         border-radius: 0.5rem;
-        background: var(--background-primary);
+        background: var(--global--background-primary);
         overflow: hidden;
       }
 
@@ -56,7 +56,7 @@ import { CONNECTOR_IMPORTS, CONNECTORS_STYLES, CONNECTORS_TEMPLATE, CanvasNodeBa
 
       .url {
         font-size: 0.75rem;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;

@@ -100,7 +100,7 @@ import type { NavNode } from '@shared/content-model';
         font: inherit;
         font-size: 14px;
         line-height: 1.4;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
         text-align: start;
         text-decoration: none;
         cursor: pointer;
@@ -108,13 +108,13 @@ import type { NavNode } from '@shared/content-model';
       }
 
       .tree-item-self:hover {
-        background: var(--background-modifier-hover);
-        color: var(--text-normal);
+        background: var(--global--background-modifier-hover);
+        color: var(--global--text-normal);
       }
 
       .tree-item-self.is-active {
-        background: var(--nav-item-background-active);
-        color: var(--text-accent);
+        background: var(--global--nav-item-background-active);
+        color: var(--global--text-accent);
         font-weight: 500;
       }
 
@@ -131,7 +131,7 @@ import type { NavNode } from '@shared/content-model';
         justify-content: center;
         width: 18px;
         height: 18px;
-        color: var(--text-faint);
+        color: var(--global--text-faint);
       }
 
       .collapse-icon svg {
@@ -144,7 +144,7 @@ import type { NavNode } from '@shared/content-model';
       }
 
       .canvas-icon {
-        color: var(--text-faint);
+        color: var(--global--text-faint);
       }
 
       /* Children expand/collapse: the 0fr->1fr grid track animates height
@@ -154,7 +154,7 @@ import type { NavNode } from '@shared/content-model';
         grid-template-rows: 1fr;
         margin-inline-start: 14px;
         padding-inline-start: 4px;
-        border-inline-start: 1px solid var(--indentation-guide);
+        border-inline-start: 1px solid var(--global--indentation-guide);
       }
 
       .tree-item-children-inner {

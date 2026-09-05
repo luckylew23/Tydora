@@ -33,9 +33,9 @@ import { CONNECTOR_IMPORTS, CONNECTORS_STYLES, CONNECTORS_TEMPLATE, CanvasNodeBa
         box-sizing: border-box;
         height: 100%;
         overflow: auto;
-        border: 0.0625rem solid var(--df-node-border-color, var(--background-modifier-border));
+        border: 0.0625rem solid var(--df-node-border-color, var(--global--background-modifier-border));
         border-radius: 0.5rem;
-        background: var(--background-primary);
+        background: var(--global--background-primary);
         padding: 0.5rem 0.75rem;
       }
     `,

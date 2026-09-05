@@ -44,13 +44,13 @@ import type { Heading } from '@shared/content-model';
         font-size: 0.6875rem;
         letter-spacing: 0.05em;
         text-transform: uppercase;
-        color: var(--text-faint);
+        color: var(--global--text-faint);
       }
 
       .toc-link {
         display: block;
         padding-block: 0.25rem;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
         text-decoration: none;
         font-size: 0.8125rem;
         line-height: 1.4;
@@ -58,11 +58,11 @@ import type { Heading } from '@shared/content-model';
       }
 
       .toc-link:hover {
-        color: var(--text-normal);
+        color: var(--global--text-normal);
       }
 
       .toc-active {
-        color: var(--text-accent);
+        color: var(--global--text-accent);
         font-weight: 600;
       }
     `,

@@ -62,8 +62,8 @@ export const CONNECTORS_STYLES = `
     bottom: 3px;
     width: 7px;
     height: 7px;
-    border-right: 2px solid var(--text-faint);
-    border-bottom: 2px solid var(--text-faint);
+    border-right: 2px solid var(--global--text-faint);
+    border-bottom: 2px solid var(--global--text-faint);
     opacity: 0.7;
   }
 `;

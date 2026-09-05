@@ -86,8 +86,8 @@ import { GraphCanvas } from './graph-canvas';
         outline: none;
         width: min(1200px, 94vw);
         height: 90vh;
-        background: var(--background-primary);
-        border: 1px solid var(--background-modifier-border);
+        background: var(--global--background-primary);
+        border: 1px solid var(--global--background-modifier-border);
         border-radius: 12px;
         box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
         overflow: hidden;
@@ -107,13 +107,13 @@ import { GraphCanvas } from './graph-canvas';
         justify-content: space-between;
         flex: 0 0 auto;
         padding: 12px 16px;
-        border-bottom: 1px solid var(--background-modifier-border);
+        border-bottom: 1px solid var(--global--background-modifier-border);
       }
       .graph-panel-title {
         margin: 0;
         font-size: 0.95rem;
         font-weight: 600;
-        color: var(--text-normal);
+        color: var(--global--text-normal);
       }
       .graph-panel-close {
         display: inline-flex;
@@ -125,16 +125,16 @@ import { GraphCanvas } from './graph-canvas';
         border: none;
         border-radius: 6px;
         background: transparent;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
         cursor: pointer;
         transition: background 120ms ease, color 120ms ease;
       }
       .graph-panel-close:hover {
-        background: var(--background-modifier-hover);
-        color: var(--text-normal);
+        background: var(--global--background-modifier-hover);
+        color: var(--global--text-normal);
       }
       .graph-panel-close:focus-visible {
-        outline: 2px solid var(--interactive-accent);
+        outline: 2px solid var(--global--interactive-accent);
         outline-offset: 2px;
       }
       .graph-panel-body {

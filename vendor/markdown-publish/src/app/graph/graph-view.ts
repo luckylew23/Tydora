@@ -38,7 +38,7 @@ import { GraphCanvas } from './graph-canvas';
       }
       .graph-error {
         padding: 32px 48px;
-        color: var(--text-muted);
+        color: var(--global--text-muted);
       }
     `,
   ],

@@ -69,9 +69,9 @@ const MAX_ZOOM = 3;
         height: 100%;
         /* fill the viewport: a board is a workspace, not an article */
         min-height: calc(100dvh - 16px);
-        background-color: var(--background-primary);
+        background-color: var(--global--background-primary);
         background-image: radial-gradient(
-          var(--background-modifier-border) 1.1px,
+          var(--global--background-modifier-border) 1.1px,
           transparent 1.1px
         );
         background-size: 22px 22px;

@@ -110,7 +110,7 @@ import { GraphOverlay } from './graph-overlay';
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.06em;
-        color: var(--text-faint);
+        color: var(--global--text-faint);
       }
       .local-graph-actions {
         display: flex;
@@ -126,24 +126,24 @@ import { GraphOverlay } from './graph-overlay';
         border: none;
         border-radius: 5px;
         background: transparent;
-        color: var(--text-faint);
+        color: var(--global--text-faint);
         cursor: pointer;
         transition: background 120ms ease, color 120ms ease;
       }
       .local-graph-btn:hover {
-        background: var(--background-modifier-hover);
-        color: var(--text-normal);
+        background: var(--global--background-modifier-hover);
+        color: var(--global--text-normal);
       }
       .local-graph-btn:focus-visible {
-        outline: 2px solid var(--interactive-accent);
+        outline: 2px solid var(--global--interactive-accent);
         outline-offset: 2px;
       }
       .local-graph-canvas {
         height: 240px;
-        border: 1px solid var(--background-modifier-border);
+        border: 1px solid var(--global--background-modifier-border);
         border-radius: 8px;
         overflow: hidden;
-        background: var(--background-primary);
+        background: var(--global--background-primary);
       }
     `,
   ],
