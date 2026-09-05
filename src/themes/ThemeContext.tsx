@@ -104,7 +104,7 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: "mint",
+  theme: "white",
   setTheme: () => {},
   appearanceMode: "system",
   setAppearanceMode: () => {},
@@ -331,7 +331,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       }
       document.documentElement.dataset.theme = theme;
     } else {
-      document.documentElement.dataset.theme = "mint";
+      document.documentElement.dataset.theme = "white";
     }
     document.documentElement.dataset.appearance = resolvedMode;
   }, [theme, resolvedMode, appearanceMode, preferredAppTheme, preferredCodeTheme]);

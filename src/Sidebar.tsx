@@ -186,6 +186,22 @@ function ancestorDirs(dirPath: string, rootPath: string): string[] {
   return result;
 }
 
+/** 比较当前可见文件树（折叠目录不看子节点）。结构未变时跳过 setState，避免刷新打散点击。 */
+function visibleTreeEqual(a: TreeNode[], b: TreeNode[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x.path !== y.path || x.isDirectory !== y.isDirectory || x.expanded !== y.expanded) {
+      return false;
+    }
+    if (x.isDirectory && x.expanded) {
+      if (!visibleTreeEqual(x.children ?? [], y.children ?? [])) return false;
+    }
+  }
+  return true;
+}
+
 async function uniqueFilePath(dirPath: string, baseName: string, ext: string): Promise<string> {
   const first = joinPath(dirPath, `${baseName}${ext}`);
   if (!(await exists(first))) return first;
@@ -1432,8 +1448,18 @@ function FileTree({
   const treeRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef(0);
   const pendingRevealPathRef = useRef<string | null>(null);
-  // 刷新（loadRoot/handleReload）前保存的滚动位置，渲染后恢复，避免自动刷新导致跳回顶部
-  const pendingScrollTopRef = useRef<number | null>(null);
+  // 滚动位置持久化：用 localStorage 保存，刷新/重载后恢复，避免跳回顶部
+  const scrollSaveQueuedRef = useRef(false);
+  const loadGenRef = useRef(0);
+  const restoreGenRef = useRef(0);
+  const restoringScrollRef = useRef(false);
+  const pointerDownOnTreeRef = useRef(false);
+  const interactUntilRef = useRef(0);
+
+  const markTreeInteract = useCallback(() => {
+    interactUntilRef.current = Date.now() + 450;
+    restoreGenRef.current++;
+  }, []);
 
   const scrollToPath = useCallback((path: string) => {
     const node = treeRef.current?.querySelector(`[data-path="${CSS.escape(path)}"]`);
@@ -1441,6 +1467,26 @@ function FileTree({
       node.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, []);
+
+  // ── 滚动位置持久化（localStorage） ──
+  const scrollStorageKey = `zmd-sidebar-scroll-${vaultPath}`;
+
+  const saveScrollTop = useCallback((st: number) => {
+    try {
+      localStorage.setItem(scrollStorageKey, String(st));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }, [scrollStorageKey]);
+
+  const loadScrollTop = useCallback((): number | null => {
+    try {
+      const raw = localStorage.getItem(scrollStorageKey);
+      return raw ? Number(raw) : null;
+    } catch {
+      return null;
+    }
+  }, [scrollStorageKey]);
 
   const handleStartEdit = useCallback((path: string) => {
     setEditingPath(path);
@@ -1499,30 +1545,46 @@ function FileTree({
     }
   }, []);
 
-  const loadRoot = useCallback(async () => {
-    pendingScrollTopRef.current = treeRef.current?.scrollTop ?? null;
+  const loadRoot = useCallback(async (opts?: { skipIfUnchanged?: boolean; deferIfInteracting?: boolean }) => {
+    const gen = ++loadGenRef.current;
     bootStart("sidebar_load_root");
     bootStamp("sidebar_load_dir_start");
     const nodes = await loadDirectory(rootPath);
     bootStamp("sidebar_load_dir_done");
-    // Restore expanded state from localStorage
-    const savedExpanded = loadExpandedPaths(vaultPath);
-    if (savedExpanded.size > 0) {
+    const expanded = new Set(loadExpandedPaths(vaultPath));
+    for (const p of collectExpanded(rootNodesRef.current)) expanded.add(p);
+    if (expanded.size > 0) {
       bootStamp("sidebar_restore_expanded_start");
-      await restoreExpanded(nodes, savedExpanded);
+      await restoreExpanded(nodes, expanded);
       bootStamp("sidebar_restore_expanded_done");
     }
+    if (gen !== loadGenRef.current) {
+      bootEnd("sidebar_load_root");
+      return;
+    }
+    if (opts?.deferIfInteracting && (pointerDownOnTreeRef.current || Date.now() < interactUntilRef.current)) {
+      window.setTimeout(() => {
+        if (gen !== loadGenRef.current) return;
+        void loadRoot(opts);
+      }, 80);
+      bootEnd("sidebar_load_root");
+      return;
+    }
+    if (opts?.skipIfUnchanged && visibleTreeEqual(rootNodesRef.current, nodes)) {
+      bootEnd("sidebar_load_root");
+      return;
+    }
+    if (treeRef.current) lastScrollTopRef.current = treeRef.current.scrollTop;
     setRootNodes(nodes);
     bootStamp("sidebar_setRootNodes_called");
     bootEnd("sidebar_load_root");
-  }, [rootPath, vaultPath]);
+  }, [rootPath, vaultPath, collectExpanded, restoreExpanded]);
 
   const handleRefresh = useCallback(() => {
     forceUpdate((n) => n + 1);
   }, []);
 
   const handleReload = useCallback(async (expandPath?: string | string[]) => {
-    pendingScrollTopRef.current = treeRef.current?.scrollTop ?? null;
     invalidateFileCache(rootPath);
     const paths = collectExpanded(rootNodesRef.current);
     if (expandPath) {
@@ -1574,23 +1636,38 @@ function FileTree({
     scrollToPath(pending);
   }, [rootNodes, scrollToPath]);
 
-  // 刷新后恢复滚动位置：loadRoot/handleReload 在 setRootNodes 前保存了 scrollTop，
-  // 渲染完成后在此处恢复，避免自动刷新导致文件树跳回顶部。
-  // 若有待 reveal 的文件（pendingRevealPathRef），则交给 reveal 逻辑滚动，不恢复。
+  // 刷新后同步恢复滚动。优先用当前 DOM/ref 位置，避免 rAF 循环在点击过程中把列表拽走。
   useLayoutEffect(() => {
-    const st = pendingScrollTopRef.current;
-    if (st == null || !treeRef.current) return;
-    if (pendingRevealPathRef.current) {
-      pendingScrollTopRef.current = null;
-      return;
-    }
-    pendingScrollTopRef.current = null;
+    if (pendingRevealPathRef.current) return;
     const el = treeRef.current;
-    // 等待一帧确保 DOM 布局完成，再恢复滚动位置
-    requestAnimationFrame(() => {
-      if (el) el.scrollTop = st;
-    });
-  }, [rootNodes]);
+    if (!el) return;
+    const saved = lastScrollTopRef.current > 0 ? lastScrollTopRef.current : (loadScrollTop() ?? 0);
+    if (saved <= 0) return;
+
+    const restoreGen = ++restoreGenRef.current;
+    restoringScrollRef.current = true;
+    el.scrollTop = saved;
+    restoringScrollRef.current = false;
+    if (el.scrollTop >= saved - 1) return;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+    if (atBottom) return;
+
+    let rafId = 0;
+    let attempts = 0;
+    const tryRestore = () => {
+      if (restoreGen !== restoreGenRef.current) return;
+      if (pointerDownOnTreeRef.current || Date.now() < interactUntilRef.current) return;
+      attempts++;
+      restoringScrollRef.current = true;
+      el.scrollTop = saved;
+      restoringScrollRef.current = false;
+      const reached = el.scrollTop >= saved - 1
+        || el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+      if (!reached && attempts < 20) rafId = requestAnimationFrame(tryRestore);
+    };
+    rafId = requestAnimationFrame(tryRestore);
+    return () => cancelAnimationFrame(rafId);
+  }, [rootNodes, loadScrollTop]);
 
   // ── Collapse all / Expand all ──
   const hasExpandedDir = useMemo(() => {
@@ -1989,7 +2066,42 @@ function FileTree({
     setCtxMenu({ x: e.clientX, y: e.clientY });
   }, []);
 
-  useEffect(() => { loadRoot(); }, [loadRoot, refreshKey]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const run = () => {
+      if (cancelled) return;
+      if (pointerDownOnTreeRef.current || Date.now() < interactUntilRef.current) {
+        timer = setTimeout(run, 80);
+        return;
+      }
+      void loadRoot({ skipIfUnchanged: true, deferIfInteracting: true });
+    };
+    run();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [loadRoot, refreshKey]);
+
+  useEffect(() => {
+    const tree = treeRef.current;
+    if (!tree) return;
+    const onPointerDown = () => {
+      pointerDownOnTreeRef.current = true;
+      markTreeInteract();
+    };
+    const onPointerUp = () => {
+      pointerDownOnTreeRef.current = false;
+      markTreeInteract();
+    };
+    tree.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      tree.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [markTreeInteract]);
 
   // Handle expand/collapse and persist to localStorage
   const handleToggleExpand = useCallback((path: string, expanded: boolean) => {
@@ -2270,13 +2382,31 @@ function FileTree({
 
   const handleScroll = useCallback(() => {
     const el = treeRef.current;
-    if (!el || !onScrollToTop) return;
+    if (!el) return;
     const st = el.scrollTop;
-    if (st < lastScrollTopRef.current && st < 5) {
-      onScrollToTop();
+
+    if (!restoringScrollRef.current) {
+      markTreeInteract();
+    }
+
+    // 节流保存滚动位置到 localStorage（每帧最多一次）
+    if (!scrollSaveQueuedRef.current) {
+      scrollSaveQueuedRef.current = true;
+      requestAnimationFrame(() => {
+        scrollSaveQueuedRef.current = false;
+        const latest = treeRef.current?.scrollTop ?? 0;
+        lastScrollTopRef.current = latest;
+        saveScrollTop(latest);
+      });
+    }
+
+    if (onScrollToTop) {
+      if (st < lastScrollTopRef.current && st < 5) {
+        onScrollToTop();
+      }
     }
     lastScrollTopRef.current = st;
-  }, [onScrollToTop]);
+  }, [onScrollToTop, saveScrollTop, markTreeInteract]);
 
   // ── Link update dialog handlers ──
   const handleLinkUpdateAlways = useCallback(async () => {
@@ -2474,7 +2604,13 @@ function FileTree({
             depth={0}
             activePath={activePath}
             pendingActivePath={pendingActivePath}
-            onSelect={onSelect}
+            onSelect={(path) => {
+              // 鼠标点击后 Vim 光标跟随到该文件：pending-active 始终指向最近交互的节点，
+              // 任何未来的 reveal 也只滚到当前文件（在视野内，nearest 不会产生滚动）
+              setPendingActivePath(path);
+              pendingActivePathRef.current = path;
+              onSelect(path);
+            }}
             onRefresh={handleRefresh}
             onReload={handleReload}
             rootPath={rootPath}
@@ -3068,10 +3204,13 @@ export default function Sidebar({
   const outlinePanelRef = useRef<HTMLDivElement>(null);
   const bookmarksPanelRef = useRef<HTMLDivElement>(null);
 
-  const focusTabContent = useCallback((tab: "files" | "search" | "outline" | "bookmarks") => {
+  const focusTabContent = useCallback((tab: "files" | "search" | "outline" | "bookmarks", opts?: { reveal?: boolean }) => {
     switch (tab) {
       case "files": {
         filesPanelRef.current?.focus();
+        // 鼠标点击路径（reveal: false）只做焦点管理，不滚动列表：
+        // 否则 pending-active/active 落在滚动位置之外时，scrollIntoView 会把文件树拽回顶部
+        if (opts?.reveal === false) break;
         // 兜底：若 FileTree 内部已有 pending-active 元素，滚到视野
         const el = filesPanelRef.current?.querySelector<HTMLElement>(
           ".tree-node.pending-active, .tree-node.active",
@@ -3246,7 +3385,8 @@ export default function Sidebar({
         // 当前焦点已经在侧栏内部则不重复触发
         const cur = document.activeElement as HTMLElement | null;
         if (cur && sidebarRef.current?.contains(cur)) return;
-        focusTabContent(activeTab);
+        // 鼠标点击不做 reveal：文件树停在用户滚动到的位置，避免被拽回顶部
+        focusTabContent(activeTab, { reveal: false });
       }}
     >
       <div className="sidebar-topbar" data-tauri-drag-region="deep" />
