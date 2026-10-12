@@ -29,6 +29,13 @@ pub enum CliError {
     #[error("not found: {0}")]
     NotFound(String),
 
+    /// 内容解析失败：参数语法正确，但指向的内容不合法
+    /// （如 frontmatter YAML 结构损坏）。
+    /// 退出码 2 —— 与 `Usage` 同档（用户应检查输入），但错误前缀区分开，
+    /// 避免 "usage:" 误导用户以为是自己参数写错。
+    #[error("parse: {0}")]
+    Parse(String),
+
     /// IO 错误：文件系统读写失败。
     /// 退出码 5。
     #[error("io: {0}")]
@@ -44,6 +51,7 @@ impl CliError {
     pub fn exit_code(&self) -> u8 {
         match self {
             Self::Usage(_) => 2,
+            Self::Parse(_) => 2,
             Self::NotFound(_) => 3,
             Self::Io(_) => 5,
             Self::Other(_) => 1,
@@ -64,7 +72,7 @@ impl From<ExitCode> for CliError {
 /// - CoreError::Usage → CliError::Usage（exit 2）
 /// - CoreError::NotFound → CliError::NotFound（exit 3）
 /// - CoreError::Io → CliError::Io（exit 5，自动 #[from]）
-/// - CoreError::Parse → CliError::Usage（exit 2；用户面对"解析失败"应先检查输入）
+/// - CoreError::Parse → CliError::Parse（exit 2；前缀 "parse:" 而非 "usage:"）
 /// - CoreError::Other → CliError::Other（exit 1）
 impl From<tydora_core::CoreError> for CliError {
     fn from(e: tydora_core::CoreError) -> Self {
@@ -72,7 +80,7 @@ impl From<tydora_core::CoreError> for CliError {
         match e {
             CE::Usage(s) => Self::Usage(s),
             CE::NotFound(s) => Self::NotFound(s),
-            CE::Parse(s) => Self::Usage(s),
+            CE::Parse(s) => Self::Parse(s),
             CE::Other(s) => Self::Other(s),
             CE::Io(io) => Self::Io(io),
         }

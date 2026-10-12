@@ -3491,7 +3491,22 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     track(ANALYTICS_EVENTS.EXPORT_XHS);
   }, [effectiveMode, setActiveMode]);
 
+  // 源码模式（SV）下 EditorContent 已卸载、editor.view 为 null，导出类能力不可用。
+  // 导出按钮已用 effectiveMode === "sv" 禁用，命令面板必须走同一道闸门 ——
+  // 否则命令面板能绕过按钮的守卫，导出到过期内容。
+  const guardSourceModeCommand = useCallback(
+    (run: () => void) => {
+      if (effectiveMode === "sv") {
+        alert(t("app.export.sourceModeUnsupported"));
+        return;
+      }
+      run();
+    },
+    [effectiveMode, t],
+  );
+
   // 复制为 Markdown — 直接获取编辑器 Markdown 源码并写入剪贴板，无需预览
+  // （源码模式下 getValue() 由编辑器句柄转发到 CodeMirror，取到的是最新源码）
   const [markdownCopied, setMarkdownCopied] = useState(false);
   const handleCopyAsMarkdown = useCallback(async () => {
     const markdown = editorHandleRef.current?.getValue();
@@ -3597,11 +3612,11 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     { id: "publish", label: t("app.command.labels.publishWebsite"), category: t("app.command.categories.tools"), action: handlePublish },
     // 复制和导出 — 通过命令面板直接触发各格式导出/复制
     { id: "copy-markdown", label: t("app.command.labels.copyMarkdown"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.copyMarkdown").split(", "), action: handleCopyAsMarkdown },
-    { id: "copy-wechat", label: t("app.command.labels.copyWechat"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.copyWechat").split(", "), action: () => handleExportRef.current("wechat") },
-    { id: "export-pdf", label: t("app.command.labels.exportPdf"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportPdf").split(", "), action: () => handleExportRef.current("pdf") },
-    { id: "export-html", label: t("app.command.labels.exportHtml"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportHtml").split(", "), action: () => handleExportRef.current("html") },
-    { id: "export-docx", label: t("app.command.labels.exportWord"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportWord").split(", "), action: () => handleExportRef.current("docx") },
-    { id: "export-png", label: t("app.command.labels.exportImage"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportImage").split(", "), action: () => handleExportRef.current("png") },
+    { id: "copy-wechat", label: t("app.command.labels.copyWechat"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.copyWechat").split(", "), action: () => guardSourceModeCommand(() => handleExportRef.current("wechat")) },
+    { id: "export-pdf", label: t("app.command.labels.exportPdf"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportPdf").split(", "), action: () => guardSourceModeCommand(() => handleExportRef.current("pdf")) },
+    { id: "export-html", label: t("app.command.labels.exportHtml"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportHtml").split(", "), action: () => guardSourceModeCommand(() => handleExportRef.current("html")) },
+    { id: "export-docx", label: t("app.command.labels.exportWord"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportWord").split(", "), action: () => guardSourceModeCommand(() => handleExportRef.current("docx")) },
+    { id: "export-png", label: t("app.command.labels.exportImage"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportImage").split(", "), action: () => guardSourceModeCommand(() => handleExportRef.current("png")) },
     { id: "export-xiaohongshu", label: t("app.command.labels.exportXhs"), category: t("app.command.categories.export"), aliases: t("app.command.aliases.exportXhs").split(", "), action: handleOpenXhs },
 
     // 编辑模式
@@ -3674,7 +3689,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         openSettings(item.tab);
       },
     })),
-  ], [t, handleSave, activeVaultIndex, fileName, handleNewWindow, handleSidebarToggle, cycleMode, toggleTypewriterMode, handleMinimize, handleToggleMaximize, handleClose, setViewMode, setActiveMode, viewMode, vaults, handleCopyAsMarkdown, content, getGraphSettings, handleOpenXhs, handlePublish, openSettings]);
+  ], [t, handleSave, activeVaultIndex, fileName, handleNewWindow, handleSidebarToggle, cycleMode, toggleTypewriterMode, handleMinimize, handleToggleMaximize, handleClose, setViewMode, setActiveMode, viewMode, vaults, handleCopyAsMarkdown, content, getGraphSettings, handleOpenXhs, handlePublish, openSettings, guardSourceModeCommand]);
 
   return (
     <div className="app">

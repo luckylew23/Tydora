@@ -57,11 +57,18 @@ let lastAppliedScale = 0;
 export async function applyUiScale(scale: number): Promise<void> {
   const target = Math.round(scale * 1000) / 1000;
   if (Math.abs(target - lastAppliedScale) < 0.005) return;
-  lastAppliedScale = target;
+  // 纯浏览器环境（vite dev）无缩放能力：直接记录，避免反复尝试
+  if (!("__TAURI_INTERNALS__" in window)) {
+    lastAppliedScale = target;
+    return;
+  }
   try {
-    if (!("__TAURI_INTERNALS__" in window)) return; // 纯浏览器环境（vite dev）无缩放能力
     const { getCurrentWebview } = await import("@tauri-apps/api/webview");
     await getCurrentWebview().setZoom(target);
+    // 只在真正生效后记录。若在 await 之前记录，setZoom 抛错（webview 未就绪等）
+    // 会让差值判据 < 0.005 永久命中，之后所有同值调用都被提前 return，
+    // 缩放再也无法生效。
+    lastAppliedScale = target;
   } catch (e) {
     console.error("[uiScale] 应用界面缩放失败:", e);
   }

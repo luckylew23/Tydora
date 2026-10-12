@@ -1,6 +1,7 @@
 // src/tags/TagIndexService.ts
 
 import { readDir, readTextFile } from "@tauri-apps/plugin-fs";
+import { FRONTMATTER_RE } from "../Editor/frontmatter";
 
 /** 解析 Markdown 文本中的所有 #标签 */
 export function parseTags(content: string): string[] {
@@ -23,7 +24,8 @@ export function extractTagsFromContent(content: string): string[] {
   const tags = new Set<string>();
 
   // 1. 从 frontmatter 的 tags 字段解析
-  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  //    与编辑器共用同一份围栏正则（含空元数据、无尾换行、CRLF、空行等边界）
+  const frontmatterMatch = content.match(FRONTMATTER_RE);
   if (frontmatterMatch) {
     const fm = frontmatterMatch[1];
     const tagsLineMatch = fm.match(/^tags:\s*\[([^\]]*)\]/m) || fm.match(/^tags:\s*([^\n]*)/m);

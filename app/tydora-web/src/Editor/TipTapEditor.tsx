@@ -2293,6 +2293,13 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
     // 暴露 API
     useImperativeHandle(ref, () => ({
       getValue: () => {
+        // 源码模式：TipTap 文档不随源码编辑更新（外部 value 同步在 sv 分支直接
+        // return），真实内容在 CodeMirror 里。此处不转发的话，所有 getValue()
+        // 消费者都会拿到「进入 SV 之前」的过期内容。
+        if (mode === "sv") {
+          const src = sourceEditorRef.current?.getValue();
+          if (src != null) return src;
+        }
         if (!editor) return "";
         return getMarkdownSafe(editor) ?? "";
       },
@@ -2352,10 +2359,13 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         }
       },
       highlightSearch: (query: string) => {
+        // 源码模式走 CodeMirror 选区，不维护 IR 高亮装饰
+        if (mode === "sv") return;
         if (!isEditorAlive(editor)) return;
         editor.commands.setSearchHighlight(query);
       },
       clearHighlight: () => {
+        if (mode === "sv") return;
         if (!isEditorAlive(editor)) return;
         editor.commands.clearSearchHighlight();
       },
@@ -2416,7 +2426,26 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         return (editor.view.dom as HTMLElement).cloneNode(true) as HTMLElement;
       },
       findMatches: (query: string) => {
-        if (!editor || !query) return [];
+        if (!query) return [];
+        // 源码模式：直接在 Markdown 源码上搜索，返回的是**源码字符偏移**；
+        // 后续 selectMatch / replaceAt 同样转发给 CodeMirror，偏移语义自洽。
+        // 历史缺陷：这里仍读 TipTap 文档 —— SV 期间该文档不更新且 view 已销毁，
+        // 于是计数与源码不符、跳转/替换静默失效。
+        if (mode === "sv") {
+          const src = sourceEditorRef.current?.getValue() ?? "";
+          const lowerSrc = src.toLowerCase();
+          const lowerQuery = query.toLowerCase();
+          const hits: Array<{ from: number; to: number }> = [];
+          let cursor = 0;
+          while (cursor <= lowerSrc.length - lowerQuery.length) {
+            const idx = lowerSrc.indexOf(lowerQuery, cursor);
+            if (idx === -1) break;
+            hits.push({ from: idx, to: idx + query.length });
+            cursor = idx + 1;
+          }
+          return hits;
+        }
+        if (!editor) return [];
         const results: Array<{ from: number; to: number }> = [];
         const lowerQuery = query.toLowerCase();
         // 逐 textblock（段落/标题/代码块等）搜索，而不是用 doc.textContent：
@@ -2439,6 +2468,11 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         return results;
       },
       selectMatch: (from: number, to: number) => {
+        // 源码模式：偏移是源码字符偏移，直接交给 CodeMirror 选中
+        if (mode === "sv") {
+          sourceEditorRef.current?.setSelectionAndFocus(from, to);
+          return;
+        }
         if (!editor) return;
         // 查找结果缓存的位置可能因文档变化（输入/外部更新/切换文件）而失效，
         // 越界时忽略本次操作，避免 ProseMirror "Position X out of range" 崩溃
@@ -2460,6 +2494,10 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         });
       },
       selectAndScroll: (from: number, to: number) => {
+        if (mode === "sv") {
+          sourceEditorRef.current?.setSelectionAndFocus(from, to);
+          return;
+        }
         if (!editor) return;
         const range = sanitizeSelectionRange(editor, from, to);
         if (!range) return;
@@ -2479,6 +2517,23 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
         });
       },
       replaceAt: (from: number, to: number, replacement: string) => {
+        // 源码模式：用用户态替换（会回调 onChange 写回缓冲）。
+        // 不能用 setValue —— 那是外部同步语义，不回调 onChange，替换结果会丢。
+        if (mode === "sv") {
+          const src = sourceEditorRef.current?.getValue();
+          if (src == null) return;
+          if (
+            !Number.isFinite(from) ||
+            !Number.isFinite(to) ||
+            from < 0 ||
+            to > src.length ||
+            from > to
+          ) {
+            return; // 偏移已过期，忽略本次操作
+          }
+          sourceEditorRef.current?.replaceRange(from, to, replacement);
+          return;
+        }
         if (!editor) return;
         const range = sanitizeSelectionRange(editor, from, to);
         if (!range) return;

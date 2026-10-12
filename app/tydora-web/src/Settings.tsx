@@ -3119,11 +3119,41 @@ export default function Settings({ onClose }: { onClose?: () => void }) {
 
   // 保存通用设置到 localStorage，并立即应用菜单密度 / 间距 / 界面缩放
   useEffect(() => {
-    localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify(generalSettings));
+    // 读-合并-写：`zmd-general-settings` 是多窗口共享的，主窗口也会写其中
+    // 它自己维护的字段（sidebarTabPlacement / fontSize / codeFontSize）。
+    // 直接整体覆盖会把本窗口挂载时的陈旧快照写回去 —— 表现为主窗口刚拖动的
+    // 侧栏 tab 布局被回滚。合并后再写，只让本面板负责的字段生效。
+    try {
+      const raw = localStorage.getItem(GENERAL_SETTINGS_KEY);
+      const existing: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(
+        GENERAL_SETTINGS_KEY,
+        JSON.stringify({ ...existing, ...generalSettings }),
+      );
+    } catch {
+      localStorage.setItem(GENERAL_SETTINGS_KEY, JSON.stringify(generalSettings));
+    }
     applyMenuDensity(generalSettings.menuDensity);
     applyEditorSpacingFromSettings(generalSettings);
     applyUiScaleFromSettings(generalSettings);
   }, [generalSettings]);
+
+  // 跨窗口同步：主窗口写入本 key 时（本窗口不触发 storage 事件，不会被自己的
+  // 写入打断），把最新值并回本地 state。否则本地 state 会一直是陈旧快照，
+  // 下一次保存又把它整体写回去。
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== GENERAL_SETTINGS_KEY || !e.newValue) return;
+      try {
+        const incoming = JSON.parse(e.newValue) as Record<string, unknown>;
+        setGeneralSettings((prev) => ({ ...prev, ...incoming }));
+      } catch {
+        // 坏数据忽略
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // 思维导图设置状态
   const [mindmapSettings, setMindmapSettings] = useState<MindmapSettings>(() => {
@@ -3137,7 +3167,11 @@ export default function Settings({ onClose }: { onClose?: () => void }) {
 
   // 保存思维导图设置到 localStorage
   useEffect(() => {
-    localStorage.setItem(MINDMAP_SETTINGS_KEY, JSON.stringify(mindmapSettings));
+    try {
+      localStorage.setItem(MINDMAP_SETTINGS_KEY, JSON.stringify(mindmapSettings));
+    } catch {
+      // 配额溢出 / 隐私模式：不应让 useEffect 抛错冒泡到 React 提交阶段
+    }
   }, [mindmapSettings]);
 
   // 关系图谱设置状态
@@ -3152,7 +3186,11 @@ export default function Settings({ onClose }: { onClose?: () => void }) {
 
   // 保存关系图谱设置到 localStorage
   useEffect(() => {
-    localStorage.setItem(GRAPH_SETTINGS_KEY, JSON.stringify(graphSettings));
+    try {
+      localStorage.setItem(GRAPH_SETTINGS_KEY, JSON.stringify(graphSettings));
+    } catch {
+      // 同 MINDMAP：写入失败不应打断界面
+    }
   }, [graphSettings]);
 
   // 图像设置状态

@@ -1,4 +1,8 @@
 {
+  "dialog": {
+    "confirm": "Confirm",
+    "cancel": "Cancel"
+  },
   "settings": {
     "searchPlaceholder": "Search settings...",
     "searchClear": "Clear search",
@@ -694,6 +698,7 @@
       "xhsBadge": "Images",
       "exportFailed": "Export preview failed: ",
       "copyFailed": "Copy failed, please try again",
+      "sourceModeUnsupported": "Export isn't available in source mode. Switch back to rich-text mode.",
       "openFileFailed": "Failed to open file:"
     },
     "rename": {
@@ -949,6 +954,7 @@
     "toast": {
       "pathCopied": "Path copied to clipboard",
       "duplicated": "Duplicate created",
+    "duplicatedAndCopied": "Duplicate created and copied to clipboard, paste it in your file manager",
       "fileCopiedToClipboard": "File copied to clipboard, paste it in your file manager"
     },
     "bookmarks": {

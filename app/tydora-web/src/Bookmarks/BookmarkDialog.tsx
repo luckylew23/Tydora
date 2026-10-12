@@ -95,7 +95,7 @@ export function BookmarkDialog({
       groupId = existingGroups[0].id;
     }
     if (!groupId) {
-      const group = createGroup(vaultPath, t("bookmarks.defaultGroup"));
+      const group = createGroup(vaultPath, t("sidebar.bookmarks.defaultGroup"));
       groupId = group.id;
     }
     onSave(title.trim(), groupId);
@@ -110,7 +110,7 @@ export function BookmarkDialog({
       <div ref={dialogRef} className="bookmark-dialog">
         <div className="bookmark-dialog-header">
           <span className="bookmark-dialog-title">
-            {editingBookmark ? t("bookmarks.dialog.editTitle") : t("bookmarks.dialog.addTitle")}
+            {editingBookmark ? t("sidebar.bookmarks.dialog.editTitle") : t("sidebar.bookmarks.dialog.addTitle")}
           </span>
           <button className="bookmark-dialog-close" onClick={onCancel}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -122,7 +122,7 @@ export function BookmarkDialog({
 
         <div className="bookmark-dialog-body">
           <div className="bookmark-dialog-field">
-            <label className="bookmark-dialog-label">{t("bookmarks.dialog.path")}</label>
+            <label className="bookmark-dialog-label">{t("sidebar.bookmarks.dialog.path")}</label>
             <div className="bookmark-dialog-path">
               {isDirectory ? "📁 " : "📄 "}
               <span className="bookmark-dialog-path-text">{filePath}</span>
@@ -130,7 +130,7 @@ export function BookmarkDialog({
           </div>
 
           <div className="bookmark-dialog-field">
-            <label className="bookmark-dialog-label">{t("bookmarks.dialog.title")}</label>
+            <label className="bookmark-dialog-label">{t("sidebar.bookmarks.dialog.title")}</label>
             <input
               ref={titleInputRef}
               className="bookmark-dialog-input"
@@ -143,12 +143,12 @@ export function BookmarkDialog({
               }}
             />
             {!title.trim() && (
-              <span className="bookmark-dialog-hint">{t("bookmarks.dialog.emptyTitleHint")}</span>
+              <span className="bookmark-dialog-hint">{t("sidebar.bookmarks.dialog.emptyTitleHint")}</span>
             )}
           </div>
 
           <div className="bookmark-dialog-field">
-            <label className="bookmark-dialog-label">{t("bookmarks.dialog.group")}</label>
+            <label className="bookmark-dialog-label">{t("sidebar.bookmarks.dialog.group")}</label>
             {isCreatingGroup ? (
               <div className="bookmark-dialog-new-group">
                 <input
@@ -156,7 +156,7 @@ export function BookmarkDialog({
                   type="text"
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder={t("bookmarks.dialog.newGroupPlaceholder")}
+                  placeholder={t("sidebar.bookmarks.dialog.newGroupPlaceholder")}
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && newGroupName.trim()) handleSave();
@@ -167,7 +167,7 @@ export function BookmarkDialog({
                   className="bookmark-dialog-btn-text"
                   onClick={() => setIsCreatingGroup(false)}
                 >
-                  {t("bookmarks.dialog.cancel")}
+                  {t("sidebar.bookmarks.dialog.cancel")}
                 </button>
               </div>
             ) : (
@@ -177,7 +177,7 @@ export function BookmarkDialog({
                     className="bookmark-dialog-select"
                     onClick={() => setDropdownOpen(!dropdownOpen)}
                   >
-                    {selectedGroup?.name || t("bookmarks.dialog.selectGroup")}
+                    {selectedGroup?.name || t("sidebar.bookmarks.dialog.selectGroup")}
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="6 9 12 15 18 9" />
                     </svg>
@@ -201,7 +201,7 @@ export function BookmarkDialog({
                       ))}
                       {existingGroups.length === 0 && (
                         <div className="bookmark-dialog-dropdown-empty">
-                          {t("bookmarks.dialog.noGroups")}
+                          {t("sidebar.bookmarks.dialog.noGroups")}
                         </div>
                       )}
                     </div>
@@ -211,7 +211,7 @@ export function BookmarkDialog({
                   className="bookmark-dialog-btn-text"
                   onClick={() => setIsCreatingGroup(true)}
                 >
-                  {t("bookmarks.dialog.newGroup")}
+                  {t("sidebar.bookmarks.dialog.newGroup")}
                 </button>
               </div>
             )}
@@ -220,10 +220,10 @@ export function BookmarkDialog({
 
         <div className="bookmark-dialog-footer">
           <button className="bookmark-dialog-btn bookmark-dialog-btn-cancel" onClick={onCancel}>
-            {t("bookmarks.dialog.cancel")}
+            {t("sidebar.bookmarks.dialog.cancel")}
           </button>
           <button className="bookmark-dialog-btn bookmark-dialog-btn-save" onClick={handleSave}>
-            {t("bookmarks.dialog.save")}
+            {t("sidebar.bookmarks.dialog.save")}
           </button>
         </div>
       </div>

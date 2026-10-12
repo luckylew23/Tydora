@@ -134,7 +134,9 @@ export default function VaultManagerModal({ open: isOpen, onClose }: VaultManage
   const handleCreateVault = useCallback(async () => {
     if (!newVaultName.trim() || !newVaultLocation) return;
 
-    const vaultPath = newVaultLocation.replace(/[/\\]$/, "") + "\\" + newVaultName.trim();
+    // 用正斜杠拼接（Windows 文件 API 同样接受），避免 macOS/Linux 下
+    // 把反斜杠当成文件名字面字符
+    const vaultPath = newVaultLocation.replace(/[/\\]$/, "") + "/" + newVaultName.trim();
 
     try {
       // Check if directory already exists
@@ -224,7 +226,7 @@ export default function VaultManagerModal({ open: isOpen, onClose }: VaultManage
 
       const source = vaults[index].path;
       const sourceName = source.split(/[/\\]/).pop() || "vault";
-      const destination = dest.replace(/[/\\]$/, "") + "\\" + sourceName;
+      const destination = dest.replace(/[/\\]$/, "") + "/" + sourceName;
 
       await invoke("move_vault", { source, destination });
 

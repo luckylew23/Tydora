@@ -68,18 +68,31 @@ const EVENT_WHITELIST: ReadonlySet<string> = new Set<string>(
 
 /** 用户是否已做过同意/拒绝选择 */
 export function hasConsentChoice(): boolean {
-  const value = localStorage.getItem(CONSENT_KEY);
-  return value === "granted" || value === "denied";
+  try {
+    const value = localStorage.getItem(CONSENT_KEY);
+    return value === "granted" || value === "denied";
+  } catch {
+    // localStorage 不可用（隐私模式等）：视为未选择
+    return false;
+  }
 }
 
 /** 当前统计是否开启（用户已同意且未关闭） */
 export function isAnalyticsEnabled(): boolean {
-  return localStorage.getItem(CONSENT_KEY) === "granted";
+  try {
+    return localStorage.getItem(CONSENT_KEY) === "granted";
+  } catch {
+    return false;
+  }
 }
 
 /** 设置统计开关（granted 同意 / denied 拒绝） */
 export function setAnalyticsEnabled(enabled: boolean): void {
-  localStorage.setItem(CONSENT_KEY, enabled ? "granted" : "denied");
+  try {
+    localStorage.setItem(CONSENT_KEY, enabled ? "granted" : "denied");
+  } catch {
+    // 写入失败只影响下次启动的记忆，不应打断当前会话
+  }
 }
 
 /** 读取或生成安装实例 ID（持久化到 localStorage，用于近似独立访客统计） */

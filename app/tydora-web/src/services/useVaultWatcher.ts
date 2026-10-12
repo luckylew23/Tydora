@@ -111,7 +111,9 @@ export function useVaultWatcher(
 
     return () => {
       unlisten.then(fn => fn());
-      invoke('unwatch_vault').catch(console.error);
+      // 必须带 path：Rust 侧按目录引用计数，多窗口共享同一个 watcher。
+      // 不带 path 会（兼容性地）释放全部监听，导致其他窗口静默失联。
+      invoke('unwatch_vault', { path: vaultPath }).catch(console.error);
       clearTimeout(debounceRef.current);
       clearTimeout(structureDebounceRef.current);
       clearTimeout(contentDebounceRef.current);

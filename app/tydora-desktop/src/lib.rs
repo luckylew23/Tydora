@@ -32,11 +32,16 @@ mod commands;
 #[cfg(target_os = "macos")]
 mod macos_chrome;
 
-/// macOS：应用原生 CALayer 圆角。其他平台无操作。
+#[cfg(target_os = "windows")]
+mod windows_chrome;
+
+/// macOS：应用原生 CALayer 圆角；Windows：隐藏 DWM 边线毛刺 + 系统圆角。其他平台无操作。
 fn finish_macos_window(window: &tauri::WebviewWindow) {
     #[cfg(target_os = "macos")]
     macos_chrome::finish_macos_window(window);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    windows_chrome::finish_windows_window(window);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = window;
 }
 use commands::watcher_commands::{watch_vault, unwatch_vault, WatcherState};
@@ -2236,7 +2241,9 @@ pub fn run() {
             emit_boot_timing(app, "setup_begin");
 
             // 初始化文件监听器状态
-            app.manage(WatcherState(std::sync::Mutex::new(None)));
+            // 内部是 目录 → (watcher, 引用计数) 的 map：多个窗口各自监听，
+            // 只有最后一个使用者退出时才真正停止（见 commands/watcher_commands.rs）
+            app.manage(WatcherState::default());
             app.manage(PreviewServer(std::sync::Mutex::new(None)));
             app.manage(HttpClientState::new());
             app.manage(PendingFiles(std::sync::Mutex::new(Vec::new())));

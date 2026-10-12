@@ -195,6 +195,30 @@ mod tests {
     }
 
     #[test]
+    fn split_handles_blank_line_inside_frontmatter() {
+        // 元数据内部的空行不能截断围栏。
+        // 前端曾因 markdown-it 的 html_block（CommonMark type 6）遇空行即结束块，
+        // 把闭围栏与后半截元数据漏成正文段落 → IR 模式显示错乱、保存损坏元数据。
+        // GUI 与 CLI 的识别结果必须一致，故在此锁定契约。
+        let fm = split("---\ntitle: Hello\n\ntags: a\n---\n\nbody");
+        assert_eq!(fm.raw.as_deref(), Some("title: Hello\n\ntags: a\n"));
+        assert_eq!(
+            fm.data,
+            serde_json::json!({"title": "Hello", "tags": "a"})
+        );
+        assert_eq!(fm.body, "body");
+    }
+
+    #[test]
+    fn split_handles_empty_frontmatter_without_blank_line() {
+        // `---\n---`：空元数据且闭围栏前没有换行，同样必须识别为 frontmatter
+        // （前端曾把它当成两条水平线，METADATA 卡片消失）
+        let fm = split("---\n---\n\nbody");
+        assert_eq!(fm.raw.as_deref(), Some(""));
+        assert_eq!(fm.body, "body");
+    }
+
+    #[test]
     fn split_handles_crlf() {
         let md = "---\r\ntitle: X\r\n---\r\n\r\nbody\r\n";
         let fm = split(md);

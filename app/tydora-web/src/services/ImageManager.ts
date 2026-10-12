@@ -145,7 +145,12 @@ export function loadImageSettings(): ImageSettings {
 }
 
 export function saveImageSettings(settings: ImageSettings): void {
-  localStorage.setItem(IMAGE_SETTINGS_KEY, JSON.stringify(settings));
+  try {
+    localStorage.setItem(IMAGE_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // 配额溢出 / 隐私模式：设置写入失败不应打断界面
+    console.warn("[imageManager] 保存图像设置失败");
+  }
 }
 
 function padZero(n: number): string {

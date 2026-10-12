@@ -33,7 +33,13 @@ export function loadBookmarks(): BookmarkStore {
 }
 
 export function saveBookmarks(store: BookmarkStore): void {
-  localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(store));
+  try {
+    localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(store));
+  } catch {
+    // 配额溢出 / 隐私模式下写入会抛错；书签是可选功能，不应因此打断调用方
+    // （尤其本函数会在 useEffect 中调用，抛错会上冒到 React 提交阶段）
+    console.warn("[bookmarks] 保存书签失败");
+  }
 }
 
 export function getGroupsForVault(vaultPath: string): BookmarkGroup[] {
@@ -59,7 +65,7 @@ export function addBookmark(
   if (!group) {
     group = {
       id: generateId(),
-      name: i18n.t("bookmarks.ungrouped"),
+      name: i18n.t("sidebar.bookmarks.ungrouped"),
       bookmarks: [],
       order: store[vaultPath].length,
     };
@@ -119,7 +125,7 @@ export function updateBookmark(
     if (!targetGroup) {
       targetGroup = {
         id: generateId(),
-        name: i18n.t("bookmarks.ungrouped"),
+        name: i18n.t("sidebar.bookmarks.ungrouped"),
         bookmarks: [],
         order: store[vaultPath].length,
       };

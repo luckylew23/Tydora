@@ -31,7 +31,9 @@ export async function saveXhsCards(cards: XhsCard[], title: string): Promise<str
   for (let i = 0; i < cards.length; i++) {
     const name = `${base}_${String(i + 1).padStart(width, "0")}.png`;
     const bytes = dataUrlToUint8(cards[i].pngDataUrl);
-    await writeFile(`${dir}\\${name}`, bytes);
+    // 用正斜杠拼接：Windows 的文件 API 同样接受 `/`，而反斜杠在
+    // macOS/Linux 下会变成文件名里的字面字符，导致导出落到错误路径。
+    await writeFile(`${dir}/${name}`, bytes);
   }
   return dir;
 }

@@ -1,4 +1,8 @@
 {
+  "dialog": {
+    "confirm": "确定",
+    "cancel": "取消"
+  },
   "settings": {
     "searchPlaceholder": "搜索设置...",
     "searchClear": "清除搜索",
@@ -694,6 +698,7 @@
       "xhsBadge": "多图",
       "exportFailed": "导出预览失败：",
       "copyFailed": "复制失败，请重试",
+      "sourceModeUnsupported": "源码模式下无法导出，请切换回富文本模式",
       "openFileFailed": "打开文件失败:"
     },
     "rename": {
@@ -712,7 +717,8 @@
       "autoSaveFailed": "自动保存失败:",
       "openNewWindowFailed": "打开新窗口失败:",
       "renameFailed": "重命名失败:",
-      "openLocationFailed": "打开文件位置失败:"
+      "openLocationFailed": "打开文件位置失败:",
+      "openTerminalFailed": "打开终端失败:"
     },
     "command": {
       "categories": {

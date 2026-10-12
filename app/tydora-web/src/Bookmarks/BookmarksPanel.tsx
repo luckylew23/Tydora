@@ -94,12 +94,12 @@ export function BookmarksPanel({
 
   const handleCopyPath = useCallback((path: string) => {
     navigator.clipboard.writeText(path).then(() => {
-      showToast(t("toast.pathCopied"));
+      showToast(t("sidebar.toast.pathCopied"));
     }).catch(() => {});
   }, []);
 
   const handleEditTitle = useCallback((bookmarkId: string, currentTitle: string) => {
-    const newTitle = prompt(t("bookmarks.editTitlePrompt"), currentTitle);
+    const newTitle = prompt(t("sidebar.bookmarks.editTitlePrompt"), currentTitle);
     if (newTitle !== null && vaultPath) {
       BookmarksService.updateBookmark(vaultPath, bookmarkId, { title: newTitle });
       loadGroups();
@@ -206,7 +206,7 @@ export function BookmarksPanel({
   if (!vaultPath) {
     return (
       <div className="bookmarks-panel">
-        <div className="bookmarks-empty">{t("bookmarks.panel.noVault")}</div>
+        <div className="bookmarks-empty">{t("sidebar.bookmarks.panel.noVault")}</div>
       </div>
     );
   }
@@ -214,8 +214,8 @@ export function BookmarksPanel({
   if (groups.length === 0 && groups.every((g) => g.bookmarks.length === 0)) {
     return (
       <div className="bookmarks-panel">
-        <div className="bookmarks-empty">{t("bookmarks.panel.empty")}</div>
-        <div className="bookmarks-empty-hint">{t("bookmarks.panel.emptyHint")}</div>
+        <div className="bookmarks-empty">{t("sidebar.bookmarks.panel.empty")}</div>
+        <div className="bookmarks-empty-hint">{t("sidebar.bookmarks.panel.emptyHint")}</div>
       </div>
     );
   }
@@ -224,8 +224,8 @@ export function BookmarksPanel({
   if (allBookmarksEmpty) {
     return (
       <div className="bookmarks-panel">
-        <div className="bookmarks-empty">{t("bookmarks.panel.empty")}</div>
-        <div className="bookmarks-empty-hint">{t("bookmarks.panel.emptyHint")}</div>
+        <div className="bookmarks-empty">{t("sidebar.bookmarks.panel.empty")}</div>
+        <div className="bookmarks-empty-hint">{t("sidebar.bookmarks.panel.emptyHint")}</div>
       </div>
     );
   }
@@ -308,7 +308,7 @@ export function BookmarksPanel({
                   );
                 })}
                 {group.bookmarks.length === 0 && (
-                  <div className="bookmarks-empty-small">{t("bookmarks.panel.dropHere")}</div>
+                  <div className="bookmarks-empty-small">{t("sidebar.bookmarks.panel.dropHere")}</div>
                 )}
               </div>
             )}
@@ -400,15 +400,15 @@ function BookmarkContextMenu({
 
   if (type === "bookmark" && bookmark) {
     items.push(
-      { label: t("bookmarks.contextMenu.openInNewWindow"), onClick: () => { onNewWindow(bookmark.path); onClose(); } },
-      { label: t("bookmarks.contextMenu.editTitle"), onClick: () => { onEditTitle(bookmarkId!, bookmark.title); onClose(); } },
-      { label: t("bookmarks.contextMenu.unfavorite"), onClick: () => { onDeleteBookmark(bookmarkId!); onClose(); }, danger: true, separator: true },
-      { label: t("bookmarks.contextMenu.copyPath"), onClick: () => { onCopyPath(bookmark.path); onClose(); } },
+      { label: t("sidebar.bookmarks.contextMenu.openInNewWindow"), onClick: () => { onNewWindow(bookmark.path); onClose(); } },
+      { label: t("sidebar.bookmarks.contextMenu.editTitle"), onClick: () => { onEditTitle(bookmarkId!, bookmark.title); onClose(); } },
+      { label: t("sidebar.bookmarks.contextMenu.unfavorite"), onClick: () => { onDeleteBookmark(bookmarkId!); onClose(); }, danger: true, separator: true },
+      { label: t("sidebar.bookmarks.contextMenu.copyPath"), onClick: () => { onCopyPath(bookmark.path); onClose(); } },
     );
   } else if (type === "group" && group) {
     items.push(
-      { label: t("bookmarks.contextMenu.rename"), onClick: () => { onRenameGroup(groupId!, group.name); onClose(); } },
-      { label: t("bookmarks.contextMenu.deleteGroup"), onClick: () => { onDeleteGroup(groupId!); onClose(); }, danger: true },
+      { label: t("sidebar.bookmarks.contextMenu.rename"), onClick: () => { onRenameGroup(groupId!, group.name); onClose(); } },
+      { label: t("sidebar.bookmarks.contextMenu.deleteGroup"), onClick: () => { onDeleteGroup(groupId!); onClose(); }, danger: true },
     );
   }
 

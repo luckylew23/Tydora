@@ -27,7 +27,7 @@
           "y": 11
         },
         "transparent": true,
-        "shadow": true,
+        "shadow": false,
         "visible": false,
         "backgroundColor": "#00000000"
       }

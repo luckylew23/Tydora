@@ -4,16 +4,8 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { NodeView, ViewMutationRecord } from "@tiptap/pm/view";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { common, createLowlight } from "lowlight";
+import { rewriteFrontmatterAsHtml } from "../frontmatter";
 import { installMarkdownRuleOnce } from "./markdown-setup";
-
-// ── HTML 转义 ──
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 // ── lowlight 实例（YAML 高亮） ──
 const lowlight = createLowlight(common);
@@ -226,14 +218,10 @@ export const Frontmatter = Node.create({
               "block",
               "frontmatter",
               (state: any) => {
-                const src = state.src;
-                const match = src.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
-                if (!match) return;
-
-                const yamlContent = match[1];
-                const replacement =
-                  `<div data-type="frontmatter">${escapeHtml(yamlContent)}</div>\n\n`;
-                state.src = replacement + state.src.slice(match[0].length);
+                // 把 frontmatter 换成 HTML 占位块（实现与边界说明见
+                // Editor/frontmatter.ts::rewriteFrontmatterAsHtml）
+                const rewritten = rewriteFrontmatterAsHtml(state.src);
+                if (rewritten !== null) state.src = rewritten;
               },
             );
           },

@@ -191,13 +191,14 @@ pub fn list_notes(notebook: &str, explicit: Option<&Path>) -> CliResult<Notebook
         return list_root_notes(&vault, notebook);
     }
 
-    let candidate = vault.join(notebook);
-    if !candidate.is_dir() {
-        return Err(CliError::NotFound(format!(
+    // 走统一校验（拒绝 `..` 与盘符绝对路径），避免越权枚举 vault 外目录
+    let candidate = note::resolve_notebook_dir(notebook, &vault).map_err(|e| match e {
+        tydora_core::CoreError::NotFound(_) => CliError::NotFound(format!(
             "notebook '{notebook}' not found under {}",
             vault.display()
-        )));
-    }
+        )),
+        other => CliError::from(other),
+    })?;
     // 普通 notebook：递归扫描 dir 子树
     let scan = vault::scan_vault(&candidate)?;
     let mut notes: Vec<NoteInfo> = Vec::new();
@@ -483,13 +484,55 @@ pub fn cmd_create(notebook: &str, explicit: Option<&Path>, body: &BodySource) ->
     })
 }
 
+/// 目标文件同目录下的隐藏临时路径：`note.md` → `.note.md.tmp`。
+///
+/// 隐藏名（前导 `.`）有两个作用：不会被 vault 扫描成笔记；不会触发
+/// watcher 的文件树结构刷新。必须与目标同目录，保证 rename 不跨卷。
+fn tmp_sibling(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "note".to_string());
+    path.with_file_name(format!(".{name}.tmp"))
+}
+
+/// 原子写文本：写隐藏临时文件再 rename 覆盖。
+///
+/// 写失败时清理临时文件；rename 失败时目标文件保持原状。
+fn atomic_write_text(path: &Path, content: &str) -> std::io::Result<()> {
+    let tmp = tmp_sibling(path);
+    std::fs::write(&tmp, content)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// 跨卷安全的文件移动：优先 `rename`，失败则回退「复制 + 删除源文件」。
+///
+/// Windows 上 `rename` 不跨卷（`ERROR_NOT_SAME_DEVICE`），而 vault 与
+/// `$TYDORA_HOME`（trash 所在）常分属不同盘符，直接 rename 会让删除整个失败。
+/// 复制成功后才删源文件，避免中途失败造成数据丢失。
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::fs::copy(from, to)?;
+            std::fs::remove_file(from)
+        }
+    }
+}
+
 /// `tydora delete <id>` —— 把笔记移到 trash，原位不删（可恢复）。
 ///
 /// trash 位置：`$TYDORA_HOME/trash/vaults/<vault-hash8>/<id>-<unix-ts>.md`
 /// - vault-hash8 = stable hash of vault absolute path 前 8 位 hex
 /// - 时间戳用 Unix 秒（秒级精度，足够区分同 id 短时间内多次删除）
 ///
-/// 若 trash 目录不存在则 mkdir_p 创建。原子 rename。
+/// 若 trash 目录不存在则 mkdir_p 创建。优先 rename（同卷原子），跨卷回退复制。
 pub fn cmd_delete(id: &str, explicit: Option<&Path>) -> CliResult<Deleted> {
     let vault = paths::resolve_vault(explicit)?;
     let path = note::resolve_note_path(id, &vault)?;
@@ -514,7 +557,7 @@ pub fn cmd_delete(id: &str, explicit: Option<&Path>) -> CliResult<Deleted> {
         .unwrap_or(0);
     let trash_path = trash_dir.join(format!("{rel_id_flat}-{unix_ts}.md"));
 
-    std::fs::rename(&path, &trash_path)?;
+    move_file(&path, &trash_path)?;
 
     Ok(Deleted {
         schema: "tydora.delete.v1",
@@ -585,9 +628,7 @@ pub fn cmd_edit(
     let bytes_delta = bytes_after - bytes_before;
 
     if !dry_run {
-        let tmp = path.with_extension("md.tmp");
-        std::fs::write(&tmp, &new_content)?;
-        std::fs::rename(&tmp, &path)?;
+        atomic_write_text(&path, &new_content)?;
     }
 
     let mtime_after = std::time::SystemTime::now()
@@ -623,9 +664,7 @@ pub fn cmd_write(id: &str, explicit: Option<&Path>, dry_run: bool, body: &BodySo
     let bytes = new_body.as_bytes().len() as u64;
 
     if !dry_run {
-        let tmp = path.with_extension("md.tmp");
-        std::fs::write(&tmp, &new_body)?;
-        std::fs::rename(&tmp, &path)?;
+        atomic_write_text(&path, &new_body)?;
     }
 
     Ok(Wrote {
@@ -707,13 +746,14 @@ pub fn cmd_search(
     let (scan_root, root_only) = match notebook {
         Some(nb) if nb == "(root)" || nb.eq_ignore_ascii_case("root") => (vault.clone(), true),
         Some(nb) => {
-            let dir = vault.join(nb);
-            if !dir.is_dir() {
-                return Err(CliError::NotFound(format!(
+            // 走统一校验（拒绝 `..` 与盘符绝对路径），避免越权扫描 vault 外目录
+            let dir = note::resolve_notebook_dir(nb, &vault).map_err(|e| match e {
+                tydora_core::CoreError::NotFound(_) => CliError::NotFound(format!(
                     "notebook '{nb}' not found under {}",
                     vault.display()
-                )));
-            }
+                )),
+                other => CliError::from(other),
+            })?;
             (dir, false)
         }
         None => (vault.clone(), false),

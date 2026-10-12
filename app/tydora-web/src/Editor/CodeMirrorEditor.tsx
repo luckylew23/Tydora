@@ -382,6 +382,14 @@ export interface CodeMirrorEditorHandle {
    * - 光标在视口外 → 按 scrollRatio 恢复视口自身的滚动比例
    */
   setSelectionAndScroll: (anchor: number, head: number, ratio: number, scrollRatio: number) => void;
+  /**
+   * 用户态区间替换（查找替换用）。
+   *
+   * 与 `setValue` 的区别：`setValue` 是「外部同步」语义（置 isInternalRef，
+   * **不**回调 onChange）；本方法按用户编辑处理，会触发 onChange 让上层
+   * 感知内容变化（否则替换结果不会写回缓冲、保存后丢失）。
+   */
+  replaceRange: (from: number, to: number, insert: string) => void;
 }
 
 const highlightCompartment = new Compartment();
@@ -726,6 +734,19 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
             insert: val,
           },
         });
+      },
+      replaceRange: (from: number, to: number, insert: string) => {
+        const view = viewRef.current;
+        if (!view) return;
+        const len = view.state.doc.length;
+        const a = Math.max(0, Math.min(from, len));
+        const b = Math.max(a, Math.min(to, len));
+        // 不置 isInternalRef：这是用户编辑，需要 onChange 回传上层
+        view.dispatch({
+          changes: { from: a, to: b, insert },
+          selection: { anchor: a + insert.length },
+        });
+        view.focus();
       },
       focus: () => {
         viewRef.current?.focus();
