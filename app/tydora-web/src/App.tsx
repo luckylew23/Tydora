@@ -71,6 +71,9 @@ const EmbeddedCanvasView = lazy(async () => {
 });
 import { BookmarkDialog, BookmarksService } from "./Bookmarks";
 import FindReplaceDialog from "./components/FindReplaceDialog";
+import { AIRewriteOverlay, AI_OPEN_EVENT, AI_ACCEPT_EVENT, AI_ACCEPT_DOC_EVENT, AI_INSERT_EVENT, type AIOpenDetail, type AIAcceptDetail, type AIAcceptDocDetail, type AIInsertDetail } from "./ai/AIRewriteOverlay";
+import { cleanAIArtifacts } from "./ai/cleanAi";
+import { loadAISettings } from "./ai/aiSettings";
 import "./App.css";
 import "./components/FilePreview.css";
 import "./wikilink/WikiLink.css";
@@ -418,6 +421,9 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   // 每个窗格的编辑器手柄；editorHandleRef 始终指向当前激活窗格的手柄
   const paneHandlesRef = useRef<Record<string, EditorHandle | null>>({});
   const editorHandleRef = useRef<EditorHandle>(null);
+  // AI 浮层打开时捕获的编辑器手柄（模态期间不会切换窗格，直接用引用保活）
+  const aiActiveHandleRef = useRef<EditorHandle | null>(null);
+
 
   // 更新指定缓冲（patch 可为对象或基于旧值的函数）
   const updateBuffer = useCallback((id: string, patch: Partial<FileBuffer> | ((b: FileBuffer) => Partial<FileBuffer>)) => {
@@ -767,6 +773,106 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     setSettingsKey((k) => k + 1);
     setSettingsOpen(true);
   }, []);
+
+  // ── AI 助手（对照移植 soloMD：更多菜单 / Ctrl+Shift+M → 浮层 → 原位替换） ──
+
+  // AI 入口分发：未启用时跳设置 AI 页签；启用时带「选区（可为空）+ 全文 + 范围」打开浮层
+  const dispatchAIOpen = useCallback((forceScope?: "selection" | "document") => {
+    if (!loadAISettings().enabled) {
+      openSettings("ai");
+      return;
+    }
+    const h = editorHandleRef.current;
+    const sel = h?.getSelectionRange()
+      ?? codeMirrorRef.current?.getSelectionRange()
+      ?? null;
+    // 全文在打开时预捕获：浮层是模态，期间文档不会变化
+    const docText = h?.getValue() ?? codeMirrorRef.current?.getValue() ?? "";
+    if (!docText.trim()) return; // 空文档无可处理内容
+    aiActiveHandleRef.current = h ?? null;
+    window.dispatchEvent(
+      new CustomEvent<AIOpenDetail>(AI_OPEN_EVENT, {
+        detail: {
+          from: sel?.from ?? 0,
+          to: sel?.to ?? 0,
+          selection: sel?.text ?? "",
+          document: docText,
+          scope: forceScope,
+        },
+      }),
+    );
+  }, [openSettings]);
+
+  // 清理 AI 生成的格式标记：纯本地转换（有选区清理选区，否则清理全文），单步可撤销
+  const dispatchAIClean = useCallback(() => {
+    const h = editorHandleRef.current;
+    const sel = h?.getSelectionRange()
+      ?? codeMirrorRef.current?.getSelectionRange()
+      ?? null;
+    if (sel) {
+      if (h) h.replaceAt(sel.from, sel.to, cleanAIArtifacts(sel.text));
+      else codeMirrorRef.current?.replaceRange(sel.from, sel.to, cleanAIArtifacts(sel.text));
+      return;
+    }
+    const docText = h?.getValue() ?? codeMirrorRef.current?.getValue() ?? "";
+    if (!docText.trim()) return;
+    if (h) h.replaceAllContent(cleanAIArtifacts(docText));
+    else {
+      const cm = codeMirrorRef.current;
+      if (cm) cm.replaceRange(0, cm.getValue().length, cleanAIArtifacts(docText));
+    }
+  }, []);
+
+  // AI 浮层结果回写：接受 → 原位替换（单步可撤销）；全文 → 整篇替换；插入 → 光标处
+  useEffect(() => {
+    const onAccept = (e: Event) => {
+      const d = (e as CustomEvent<AIAcceptDetail>).detail;
+      if (!d) return;
+      const h = aiActiveHandleRef.current;
+      if (h) h.replaceAt(d.from, d.to, d.replacement);
+      else codeMirrorRef.current?.replaceRange(d.from, d.to, d.replacement);
+    };
+    const onAcceptDoc = (e: Event) => {
+      const d = (e as CustomEvent<AIAcceptDocDetail>).detail;
+      if (!d?.replacement) return;
+      const h = aiActiveHandleRef.current;
+      if (h) h.replaceAllContent(d.replacement);
+      else {
+        const cm = codeMirrorRef.current;
+        if (cm) cm.replaceRange(0, cm.getValue().length, d.replacement);
+      }
+    };
+    const onInsert = (e: Event) => {
+      const d = (e as CustomEvent<AIInsertDetail>).detail;
+      if (!d?.text) return;
+      const h = aiActiveHandleRef.current;
+      if (h) h.insertTextAtCursor(d.text);
+      else codeMirrorRef.current?.insertTextAtCursor(d.text);
+    };
+    window.addEventListener(AI_ACCEPT_EVENT, onAccept);
+    window.addEventListener(AI_ACCEPT_DOC_EVENT, onAcceptDoc);
+    window.addEventListener(AI_INSERT_EVENT, onInsert);
+    return () => {
+      window.removeEventListener(AI_ACCEPT_EVENT, onAccept);
+      window.removeEventListener(AI_ACCEPT_DOC_EVENT, onAcceptDoc);
+      window.removeEventListener(AI_INSERT_EVENT, onInsert);
+    };
+  }, []);
+
+  // Ctrl+Shift+M（可配置，id=ai-rewrite）：打开 AI 浮层（无选区时浮层内提醒/可改全文）
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const keys = shortcutsConfig.editor.find((s) => s.id === "ai-rewrite")?.keys ?? ["Ctrl", "Shift", "M"];
+      if (!matchShortcut(e, keys)) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      e.preventDefault();
+      dispatchAIOpen();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [dispatchAIOpen]);
+
   const [autoHideTopbar, setAutoHideTopbar] = useState(() => s.autoHideTopbar ?? false);
   const [autoHideTopbarOnCollapse, setAutoHideTopbarOnCollapse] = useState(() => s.autoHideTopbarOnCollapse ?? true);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -3776,7 +3882,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         />
 
         {/* 编辑区域 */}
-        <main className={`editor-container${!sidebarOpen ? " sidebar-is-closed" : ""}${(autoHideTopbar || (!sidebarOpen && autoHideTopbarOnCollapse)) ? " sidebar-collapsed" : ""}`}>
+        <main className={`editor-container${!sidebarOpen ? " sidebar-is-closed" : ""}${(autoHideTopbar || (!sidebarOpen && autoHideTopbarOnCollapse)) ? " sidebar-collapsed" : ""}${moreMenuOpen ? " more-menu-open" : ""}`}>
           <div className="editor-topbar-trigger" />
           {/* 顶部透明栏 */}
           <div className="editor-topbar" data-tauri-drag-region="deep">
@@ -4024,6 +4130,38 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                         <polyline points="12 16 16 20 20 16"/>
                       </svg>
                       <span className="editor-topbar-more-menu-label">{t("app.menu.replace")}</span>
+                    </div>
+                    <div className="editor-topbar-more-menu-divider" />
+                    {/* AI 助手：主项打开动作选择浮层；悬停子菜单直达各动作 */}
+                    <div
+                      className="editor-topbar-more-menu-item ai-more-item"
+                      onClick={() => { setMoreMenuOpen(false); dispatchAIOpen(); }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2l1.9 5.7a2 2 0 0 0 1.3 1.3L21 11l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 20l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 11l5.8-2a2 2 0 0 0 1.3-1.3L12 2z" />
+                      </svg>
+                      <span className="editor-topbar-more-menu-label">{t("app.menu.aiAssistant")}</span>
+                      <span className="ai-more-caret">▸</span>
+                      <div className="ai-submenu" onClick={(e) => e.stopPropagation()}>
+                        <div
+                          className="ai-submenu-item"
+                          onClick={() => { setMoreMenuOpen(false); dispatchAIOpen("selection"); }}
+                        >
+                          {t("app.menu.aiProcessSelection")}
+                        </div>
+                        <div
+                          className="ai-submenu-item"
+                          onClick={() => { setMoreMenuOpen(false); dispatchAIOpen("document"); }}
+                        >
+                          {t("app.menu.aiProcessDocument")}
+                        </div>
+                        <div
+                          className="ai-submenu-item"
+                          onClick={() => { setMoreMenuOpen(false); dispatchAIClean(); }}
+                        >
+                          {t("app.menu.aiClean")}
+                        </div>
+                      </div>
                     </div>
                     <div className="editor-topbar-more-menu-divider" />
                     <div
@@ -4310,6 +4448,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
                 onClose={() => setFindReplaceDialogMode(null)}
               />
             )}
+            <AIRewriteOverlay />
             {graphViewOpen ? (
               <div className="graph-view-embedded">
                 <Suspense fallback={null}>

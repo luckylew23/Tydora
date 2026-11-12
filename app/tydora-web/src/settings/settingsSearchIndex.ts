@@ -21,6 +21,11 @@ export interface SettingsSearchItem {
 }
 
 export const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
+  { id: "settings.ai.enable", tab: "ai", labelKey: "settings.ai.enable", descKeys: ["settings.ai.enableDesc", "settings.ai.usageDesc"] },
+  { id: "settings.ai.provider", tab: "ai", labelKey: "settings.ai.provider", descKeys: ["settings.ai.providerDesc"] },
+  { id: "settings.ai.model", tab: "ai", labelKey: "settings.ai.model", descKeys: ["settings.ai.modelDesc"] },
+  { id: "settings.ai.baseUrl", tab: "ai", labelKey: "settings.ai.baseUrl", descKeys: ["settings.ai.baseUrlDesc"] },
+  { id: "settings.ai.apiKey", tab: "ai", labelKey: "settings.ai.apiKey", descKeys: ["settings.ai.apiKeyDesc"] },
   { id: "settings.appearance.previewMaxWidth", tab: "editor", labelKey: "settings.appearance.previewMaxWidth", descKeys: ["settings.appearance.previewMaxWidthDesc"] },
   { id: "settings.appearance.editorFont", tab: "editor", labelKey: "settings.appearance.editorFont", descKeys: ["settings.appearance.editorFontDesc"] },
   { id: "settings.appearance.codeFont", tab: "editor", labelKey: "settings.appearance.codeFont", descKeys: ["settings.appearance.codeFontDesc"] },
