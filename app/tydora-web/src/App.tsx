@@ -540,12 +540,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         if (settings.fontSize) {
           document.documentElement.style.setProperty("--editor-font-size", settings.fontSize + "px");
         }
-        if (typeof settings.autoHideTopbar === 'boolean') {
-          setAutoHideTopbar(settings.autoHideTopbar);
-        }
-        if (typeof settings.autoHideTopbarOnCollapse === 'boolean') {
-          setAutoHideTopbarOnCollapse(settings.autoHideTopbarOnCollapse);
-        }
+        // plus 定制：标题栏固定常显，自动隐藏相关设置不再生效
         if (typeof settings.typewriterMode === 'boolean') {
           setTypewriterMode(settings.typewriterMode);
         }
@@ -868,8 +863,9 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     return () => window.removeEventListener("keydown", handler);
   }, [dispatchAIOpen]);
 
-  const [autoHideTopbar, setAutoHideTopbar] = useState(() => s.autoHideTopbar ?? false);
-  const [autoHideTopbarOnCollapse, setAutoHideTopbarOnCollapse] = useState(() => s.autoHideTopbarOnCollapse ?? true);
+  // plus 定制：标题栏固定常显——autoHideTopbar / autoHideTopbarOnCollapse
+  // 两个设置项不再生效（设置窗口中的开关保留但无效果）
+
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     try {
       const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
@@ -3888,7 +3884,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         />
 
         {/* 编辑区域 */}
-        <main className={`editor-container${!sidebarOpen ? " sidebar-is-closed" : ""}${(autoHideTopbar || (!sidebarOpen && autoHideTopbarOnCollapse)) ? " sidebar-collapsed" : ""}${moreMenuOpen ? " more-menu-open" : ""}`}>
+        <main className={`editor-container${!sidebarOpen ? " sidebar-is-closed" : ""}${/* plus 定制：标题栏固定常显，不自动隐藏 */ ""}${moreMenuOpen ? " more-menu-open" : ""}`}>
           <div className="editor-topbar-trigger" />
           {/* 顶部透明栏 */}
           <div className="editor-topbar" data-tauri-drag-region="deep">
