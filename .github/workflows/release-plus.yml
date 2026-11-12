@@ -34,10 +34,10 @@ jobs:
           - platform: windows-latest
             # plus 发布不生成更新器签名（fork 未配置签名密钥，且 plus 的
             # updater 端点指向上游，签名产物无人消费）
-            args: '--config {"bundle":{"createUpdaterArtifacts":false}}'
+            args: '--config tauri.plus.config.json'
             label: windows
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin --config {"bundle":{"createUpdaterArtifacts":false}}'
+            args: '--target aarch64-apple-darwin --config tauri.plus.config.json'
             label: macos-aarch64
 
     runs-on: ${{ matrix.platform }}
@@ -62,6 +62,9 @@ jobs:
         run: |
           printf '0.3.3+%s\n' "${{ steps.plus.outputs.number }}" > VERSION
           cat VERSION
+          # 关闭更新器签名产物（fork 未配置签名密钥；updater 端点指向上游，
+          # 签名产物无人消费）。以文件传递，规避内联 JSON 过 npm 层被剥引号。
+          printf '{"bundle":{"createUpdaterArtifacts":false}}' > tauri.plus.config.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
