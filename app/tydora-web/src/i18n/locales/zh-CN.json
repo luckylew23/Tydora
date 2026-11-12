@@ -106,7 +106,8 @@
       "cli": "CLI 与 MCP",
       "vim": "Vim 模式",
       "groupAbout": "关于",
-      "about": "关于"
+      "about": "关于",
+      "ai": "AI"
     },
     "terminal": {
       "colorScheme": "配色方案",
@@ -621,6 +622,38 @@
       "copy": "复制配置",
       "copied": "已复制",
       "noVault": "请先打开一个 vault，配置会自动带上它的路径。"
+    },
+    "ai": {
+      "enable": "启用 AI 助手",
+      "enableDesc": "在编辑器中通过更多菜单或 Ctrl+Shift+M 调用 AI 改写/翻译/总结等",
+      "provider": "服务商",
+      "providerDesc": "选择 AI 服务商，密钥保存在系统钥匙串",
+      "model": "模型",
+      "modelDesc": "留空使用默认模型",
+      "modelPlaceholder": "例如 deepseek-chat",
+      "baseUrl": "API 地址",
+      "baseUrlDesc": "覆盖默认端点（自建服务 / 非默认端口时填写）",
+      "apiKey": "API Key",
+      "apiKeyDesc": "仅保存在本机系统钥匙串，不上传",
+      "apiKeyOptionalDesc": "本地/自建端点可不填；如前端有反代 token 可填",
+      "keyPlaceholder": "粘贴 API Key",
+      "keyOptional": "可留空",
+      "keyPresent": "已保存",
+      "keySaved": "已保存到系统钥匙串",
+      "keyCleared": "已清除",
+      "saveKey": "保存并验证",
+      "clearKey": "清除",
+      "verify": "验证连接",
+      "getKey": "获取 Key ↗",
+      "usage": "使用方式",
+      "usageDesc": "选中文本 → 更多菜单 AI 助手（或 Ctrl+Shift+M）→ 选择动作 → 接受后原位替换（可撤销）",
+      "probeConnected": "已连接 · {{count}} 个模型",
+      "probeFailed": "连接失败",
+      "probedAt": "已探测 {{url}}",
+      "refresh": "刷新",
+      "fetchModels": "获取模型列表",
+      "probing": "探测中…",
+      "modelSelectPlaceholder": "选择模型…"
     }
   },
   "app": {
@@ -658,7 +691,12 @@
       "mindmap": "思维导图",
       "graph": "关系图谱",
       "exporting": "导出中…",
-      "exportAndCopy": "复制和导出"
+      "exportAndCopy": "复制和导出",
+      "aiAssistant": "AI 助手",
+      "aiSettings": "AI 设置",
+      "aiProcessSelection": "AI 处理选中文字",
+      "aiProcessDocument": "AI 处理全文",
+      "aiClean": "清理 AI 生成的格式标记"
     },
     "mode": {
       "current": "当前: {{mode}}，点击切换模式 (Ctrl+/)"
@@ -1276,5 +1314,34 @@
       "desc": "将一个本地文件夹作为仓库打开。",
       "dialogTitle": "选择本地文件夹作为仓库"
     }
+  },
+  "ai": {
+    "title": "AI 助手",
+    "rewrite": "改写",
+    "shorten": "精简",
+    "expand": "扩写",
+    "translateEn": "译成英文",
+    "translateZh": "译成中文",
+    "summarize": "总结",
+    "explain": "解释",
+    "custom": "自定义指令",
+    "customPrompt": "输入你的指令…",
+    "run": "开始",
+    "sending": "{{provider}} 正在生成…",
+    "proposed": "建议结果",
+    "original": "原文",
+    "empty": "等待生成…",
+    "reject": "拒绝",
+    "reroll": "重试",
+    "accept": "替换",
+    "insert": "插入",
+    "noKey": "尚未配置 {{provider}} 的 API Key。",
+    "setKey": "去设置 AI",
+    "scope": "处理范围",
+    "scopeSelection": "选中文字",
+    "scopeDocument": "全文",
+    "scopeSelectionHint": "将处理选中的 {{count}} 字",
+    "scopeDocumentHint": "将处理全文（共 {{count}} 字）",
+    "scopeNoSelection": "未选中文字：请先在正文中选中一段文字，或改用「全文」"
   }
 }

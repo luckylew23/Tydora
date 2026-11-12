@@ -390,6 +390,10 @@ export interface CodeMirrorEditorHandle {
    * 感知内容变化（否则替换结果不会写回缓冲、保存后丢失）。
    */
   replaceRange: (from: number, to: number, insert: string) => void;
+  /** 当前非空选区（源码偏移 + 源码文本）；collapsed 返回 null。AI 改写用。 */
+  getSelectionRange: () => { from: number; to: number; text: string } | null;
+  /** 在光标处插入文本（用户编辑语义，触发 onChange；AI 总结/解释插入用）。 */
+  insertTextAtCursor: (text: string) => void;
 }
 
 const highlightCompartment = new Compartment();
@@ -745,6 +749,26 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
         view.dispatch({
           changes: { from: a, to: b, insert },
           selection: { anchor: a + insert.length },
+        });
+        view.focus();
+      },
+      getSelectionRange: () => {
+        const view = viewRef.current;
+        if (!view) return null;
+        const sel = view.state.selection.main;
+        if (sel.empty) return null;
+        return { from: sel.from, to: sel.to, text: view.state.sliceDoc(sel.from, sel.to) };
+      },
+      insertTextAtCursor: (text: string) => {
+        const view = viewRef.current;
+        if (!view) return;
+        // 不置 isInternalRef：用户编辑语义，需要 onChange 回传上层
+        const pos = view.state.selection.main.to;
+        const len = view.state.doc.length;
+        const at = Math.max(0, Math.min(pos, len));
+        view.dispatch({
+          changes: { from: at, to: at, insert: text },
+          selection: { anchor: at + text.length },
         });
         view.focus();
       },

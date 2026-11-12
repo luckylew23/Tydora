@@ -2555,6 +2555,33 @@ const TipTapEditor = forwardRef<EditorHandle, TipTapEditorProps>(
           editor.chain().focus().setTextSelection(range).insertContent(replacement).run();
         } catch { /* 文档状态竞争时兜底，忽略 */ }
       },
+      getSelectionRange: () => {
+        // 源码模式：选区语义 = Markdown 源码偏移（与 replaceAt 的 SV 分支自洽）
+        if (mode === "sv") {
+          return sourceEditorRef.current?.getSelectionRange() ?? null;
+        }
+        if (!editor) return null;
+        const { from, to, empty } = editor.state.selection;
+        if (empty) return null;
+        // 块间用 \n\n 分隔，行内原子节点（图片/公式）用 \uFFFC 占位，
+        // 保证文本可回读且与 findMatches 的提取约定一致
+        const text = editor.state.doc.textBetween(from, to, "\n\n", "\uFFFC");
+        return { from, to, text };
+      },
+      replaceAllContent: (replacement: string) => {
+        // AI 全文处理：SV 走源码用户态替换；IR 整体 setContent。
+        // 均不置 isInternalRef —— 用户编辑语义，onChange 回传、单步可撤销。
+        if (mode === "sv") {
+          const src = sourceEditorRef.current;
+          if (!src) return;
+          src.replaceRange(0, src.getValue().length, replacement);
+          return;
+        }
+        if (!editor) return;
+        try {
+          editor.commands.setContent(replacement);
+        } catch { /* 文档状态竞争时兜底，忽略 */ }
+      },
     }));
 
     // 外部 value 同步
