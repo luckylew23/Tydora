@@ -1,0 +1,267 @@
+name: Release Plus
+
+# tydora-plus 个性化分支的发布流水线（手动触发）。
+# 与官方 Release.yml 的差异：
+#   - 仅 workflow_dispatch，输入构建序号 N（应用版本 = 0.3.3+N，tag = v0.3.3-plus.N）
+#   - 构建前把 VERSION 改写为 0.3.3+N（beforeBuildCommand 的 sync-version 会随之
+#     同步到 tauri.conf/Cargo/npm；构建元数据不参与 semver 优先级比较，
+#     因此 plus 用户不会被上游 0.3.3 的更新清单提示覆盖）
+#   - 只构建 Windows（NSIS + 便携 zip）与 macOS aarch64（DMG）
+#   - 资源名中的 0.3.3+N 统一改写为 0.3.3-plus.N（tag 对齐）
+#   - 直接创建预发布（prerelease），不进草稿
+
+on:
+  workflow_dispatch:
+    inputs:
+      plus_number:
+        description: '构建序号 N（应用版本 0.3.3+N，tag v0.3.3-plus.N）'
+        required: true
+        default: '2'
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ''
+            label: windows
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+            label: macos-aarch64
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch VERSION with build metadata
+        shell: bash
+        run: |
+          printf '0.3.3+%s\n' "${{ inputs.plus_number }}" > VERSION
+          cat VERSION
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './app -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 只构建产物，不创建 Release（不传 tagName，tauri-action 不会上传到 Release）
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS: 向 bundle_dmg.sh 传 --skip-jenkins，跳过 CI 上易超时的 AppleScript/Finder 步骤
+          TAURI_BUNDLER_DMG_IGNORE_CI: false
+        with:
+          configPath: app/tydora-desktop/tauri.conf.json
+          args: ${{ matrix.args }}
+
+      # Windows: 额外生成便携版（免安装）zip（双名探测 cargo bin 名 / productName）
+      - name: Package Windows portable zip
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION).Trim()
+          $candidates = @('target/release/Tydora.exe', 'target/release/tydora-desktop.exe')
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) {
+            Write-Host 'target/release 下现有的可执行文件：'
+            Get-ChildItem 'target/release' -Filter '*.exe' -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty Name
+            throw "Release exe not found. Tried: $($candidates -join ', ')"
+          }
+          New-Item -ItemType Directory -Force -Path 'release-assets' | Out-Null
+          $stage = 'portable-stage'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item $exe (Join-Path $stage 'Tydora.exe') -Force
+          $cliSidecar = 'app/tydora-desktop/binaries/tydora-cli-x86_64-pc-windows-msvc.exe'
+          if (Test-Path $cliSidecar) {
+            Copy-Item $cliSidecar (Join-Path $stage 'tydora-cli.exe') -Force
+            Write-Host "portable zip includes CLI sidecar: $cliSidecar"
+          } else {
+            Write-Warning "CLI sidecar not found at $cliSidecar; portable zip ships without CLI"
+          }
+          $zip = Join-Path 'release-assets' "Tydora_${version}_x64_portable.zip"
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
+          Get-Item $zip | Select-Object FullName, Length
+
+      - name: Stage bundle outputs
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find target -path '*/bundle/*' -type f \
+            \( -name '*.exe' -o -name '*.exe.sig' \
+               -o -name '*.msi' -o -name '*.msi.sig' \
+               -o -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) \
+            -exec cp -f {} release-assets/ \;
+          echo "=== Staged assets (${{ matrix.label }}) ==="
+          ls -la release-assets/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.label }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare release metadata
+        id: meta
+        shell: bash
+        run: |
+          PLUS="${{ inputs.plus_number }}"
+          VERSION="0.3.3+${PLUS}"
+          TAG="v0.3.3-plus.${PLUS}"
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "name=Tydora Plus v0.3.3-plus.${PLUS}"
+            echo "pub_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows assets
+        uses: actions/download-artifact@v4
+        with:
+          name: bundle-windows
+          path: assets/windows
+
+      - name: Download macOS aarch64 assets
+        uses: actions/download-artifact@v4
+        with:
+          name: bundle-macos-aarch64
+          path: assets/macos-aarch64
+
+      # 平台前缀（01-Win / 02-mac）+ 版本名对齐 tag（0.3.3+N → 0.3.3-plus.N）
+      - name: Order and rename assets
+        shell: bash
+        env:
+          PLUS: ${{ inputs.plus_number }}
+        run: |
+          mkdir -p ordered-assets
+          prefix_dir() {
+            local prefix="$1"; shift
+            for d in "$@"; do
+              [ -d "$d" ] || continue
+              for f in "$d"/*; do
+                [ -f "$f" ] || continue
+                local bn
+                bn=$(basename "$f")
+                bn=${bn//0.3.3+${PLUS}/0.3.3-plus.${PLUS}}
+                if [ "$bn" = "latest.json" ]; then
+                  cp -f "$f" "ordered-assets/$bn"
+                else
+                  cp -f "$f" "ordered-assets/${prefix}${bn}"
+                fi
+              done
+            done
+          }
+          prefix_dir "01-" assets/windows
+          prefix_dir "02-" assets/macos-aarch64
+          echo "=== Ordered assets ==="
+          ls -la ordered-assets/
+
+      # 重新生成 latest.json（版本号保留构建元数据 0.3.3+N：
+      # 与官方 0.3.3 优先级相同，plus 用户不会被提示更新回官版）
+      - name: Generate updater manifest (latest.json)
+        shell: bash
+        env:
+          PLUS: ${{ inputs.plus_number }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          PUB_DATE: ${{ steps.meta.outputs.pub_date }}
+          REPO: ${{ github.repository }}
+        run: |
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+          read_sig() {
+            local f="$1"
+            if [ -f "ordered-assets/$f" ]; then
+              cat "ordered-assets/$f"
+            else
+              echo ""
+            fi
+          }
+          WIN_SIG=$(read_sig "01-Tydora_${VERSION}_x64-setup.exe.sig")
+          MAC_ARM_SIG=$(read_sig "02-Tydora_${VERSION}_aarch64.app.tar.gz.sig")
+          {
+            echo "# Tydora Plus v0.3.3-plus.${PLUS} —— AI 助手个性化版"
+            echo ""
+            echo "基于上游 0.3.3 的个性化分支 tydora-plus："
+            echo "- AI 助手：改写/精简/扩写/中英翻译/总结/解释/自定义指令，范围（选中文字/全文），清理 AI 格式标记"
+            echo "- BYOK：OpenAI 兼容端点 / DeepSeek / Ollama，密钥仅存系统钥匙串"
+            echo "- 系统打印对话框导出 PDF（替代位图导出）"
+            echo ""
+            echo "入口：更多菜单 ▸ AI 助手，或 ⌘/Ctrl+Shift+M"
+            echo ""
+            echo "注意：应用内版本显示 0.3.3+${PLUS}（构建元数据，与官方 0.3.3 同级，不会触发自动更新覆盖）。"
+          } > RELEASE_BODY.md
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$(cat RELEASE_BODY.md)" \
+            --arg pub_date "$PUB_DATE" \
+            --arg win_sig "$WIN_SIG" \
+            --arg win_url "${BASE}/01-Tydora_${VERSION}_x64-setup.exe" \
+            --arg mac_arm_sig "$MAC_ARM_SIG" \
+            --arg mac_arm_url "${BASE}/02-Tydora_${VERSION}_aarch64.app.tar.gz" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": { signature: $win_sig, url: $win_url },
+                "darwin-aarch64": { signature: $mac_arm_sig, url: $mac_arm_url }
+              }
+            }' > ordered-assets/latest.json
+          echo "=== latest.json ==="
+          cat ordered-assets/latest.json
+
+      # 直接创建预发布并上传全部资源
+      - name: Create prerelease and upload assets
+        uses: softprops/action-gh-release@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.meta.outputs.name }}
+          body_path: RELEASE_BODY.md
+          draft: false
+          prerelease: true
+          preserve_order: true
+          fail_on_unmatched_files: false
+          files: |
+            ordered-assets/01-*
+            ordered-assets/02-*
+            ordered-assets/latest.json
