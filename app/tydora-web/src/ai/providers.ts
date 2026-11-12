@@ -107,6 +107,7 @@ export const ACTIONS: AIAction[] = [
     system: EDITOR_ROLE,
     user: "改写下面的文字，提高清晰度与流畅度，保持原意与语气不变。只输出改写后的文本。",
     resultMode: "replace",
+    saveSuffix: "-改写",
   },
   {
     id: "shorten",
@@ -114,6 +115,7 @@ export const ACTIONS: AIAction[] = [
     system: EDITOR_ROLE,
     user: "把下面的文字改写得更简洁，保留全部关键信息。只输出改写后的文本。",
     resultMode: "replace",
+    saveSuffix: "-精简",
   },
   {
     id: "expand",
@@ -121,6 +123,7 @@ export const ACTIONS: AIAction[] = [
     system: EDITOR_ROLE,
     user: "扩写下面的文字，补充细节与上下文，保持原有语气。只输出扩写后的文本。",
     resultMode: "replace",
+    saveSuffix: "-扩写",
   },
   {
     id: "translate",

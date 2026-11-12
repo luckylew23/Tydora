@@ -458,6 +458,15 @@ export function AIRewriteOverlay() {
               <button className="ai-overlay__btn" disabled={streaming} onClick={() => void onReroll()}>
                 {t("ai.reroll")}
               </button>
+              {action?.resultMode === "replace" && (
+                <button
+                  className="ai-overlay__btn"
+                  disabled={saving || !proposed || !!streamingError}
+                  onClick={() => void onSaveAs()}
+                >
+                  {t("ai.saveAs")}
+                </button>
+              )}
               <button
                 className="ai-overlay__btn ai-overlay__btn--primary"
                 disabled={streaming || saving || !proposed || !!streamingError}
