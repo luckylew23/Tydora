@@ -326,6 +326,8 @@ function createExportHeader(title?: string): HTMLElement {
   }
 
   const brand = document.createElement("span");
+  // 类名供 pdf 打印链路移除品牌角标（打印页眉不出现应用标识）
+  brand.className = "export-app-brand";
   brand.style.cssText =
     "display:flex;align-items:center;gap:6px;flex-shrink:0;";
   brand.innerHTML = `
