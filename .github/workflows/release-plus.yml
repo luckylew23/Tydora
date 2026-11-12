@@ -16,7 +16,12 @@ on:
       plus_number:
         description: '构建序号 N（应用版本 0.3.3+N，tag v0.3.3-plus.N）'
         required: true
-        default: '2'
+        default: '6'
+  # 推送 v0.3.3-plus.N 形式的 tag 直接触发（workflow 文件位于 tag 指向的
+  # tydora-plus 提交上，无需出现在默认分支即可运行）
+  push:
+    tags:
+      - 'v*.*.*-plus.*'
 
 jobs:
   build:
@@ -40,10 +45,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 序号来源：workflow_dispatch 输入，或 tag 推送时从 tag 名解析（v0.3.3-plus.N → N）
+      - name: Resolve build number
+        id: plus
+        shell: bash
+        run: |
+          P="${{ inputs.plus_number }}"
+          if [ -z "$P" ]; then P="${GITHUB_REF_NAME##*plus.}"; fi
+          echo "number=$P" >> "$GITHUB_OUTPUT"
+          echo "plus number: $P"
+
       - name: Patch VERSION with build metadata
         shell: bash
         run: |
-          printf '0.3.3+%s\n' "${{ inputs.plus_number }}" > VERSION
+          printf '0.3.3+%s\n' "${{ steps.plus.outputs.number }}" > VERSION
           cat VERSION
 
       - name: Setup Node.js
@@ -142,13 +157,14 @@ jobs:
         id: meta
         shell: bash
         run: |
-          PLUS="${{ inputs.plus_number }}"
-          VERSION="0.3.3+${PLUS}"
-          TAG="v0.3.3-plus.${PLUS}"
+          P="${{ inputs.plus_number }}"
+          if [ -z "$P" ]; then P="${GITHUB_REF_NAME##*plus.}"; fi
+          VERSION="0.3.3+${P}"
+          TAG="v0.3.3-plus.${P}"
           {
             echo "version=${VERSION}"
             echo "tag=${TAG}"
-            echo "name=Tydora Plus v0.3.3-plus.${PLUS}"
+            echo "name=Tydora Plus v0.3.3-plus.${P}"
             echo "pub_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
 
@@ -167,9 +183,9 @@ jobs:
       # 平台前缀（01-Win / 02-mac）+ 版本名对齐 tag（0.3.3+N → 0.3.3-plus.N）
       - name: Order and rename assets
         shell: bash
-        env:
-          PLUS: ${{ inputs.plus_number }}
         run: |
+          PLUS="${{ inputs.plus_number }}"
+          if [ -z "$PLUS" ]; then PLUS="${GITHUB_REF_NAME##*plus.}"; fi
           mkdir -p ordered-assets
           prefix_dir() {
             local prefix="$1"; shift
@@ -198,12 +214,13 @@ jobs:
       - name: Generate updater manifest (latest.json)
         shell: bash
         env:
-          PLUS: ${{ inputs.plus_number }}
           VERSION: ${{ steps.meta.outputs.version }}
           TAG: ${{ steps.meta.outputs.tag }}
           PUB_DATE: ${{ steps.meta.outputs.pub_date }}
           REPO: ${{ github.repository }}
         run: |
+          PLUS="${{ inputs.plus_number }}"
+          if [ -z "$PLUS" ]; then PLUS="${GITHUB_REF_NAME##*plus.}"; fi
           BASE="https://github.com/${REPO}/releases/download/${TAG}"
           read_sig() {
             local f="$1"
