@@ -90,62 +90,62 @@ export interface AIAction {
 }
 
 const EDITOR_ROLE =
-  "You are an expert editor. Reply with only the rewritten text — no preamble, no explanations, no markdown fences.";
+  "You are an expert editor. Always respond in the same language as the input text (e.g. Chinese input → Chinese output). Reply with only the rewritten text — no preamble, no explanations, no markdown fences.";
 
 const TRANSLATOR_ROLE =
-  "You are a professional translator. Reply with only the translated text — preserve markdown formatting, links, and code blocks. No preamble.";
+  "You are a professional translator. Preserve the original markdown formatting, links, and code blocks. Reply with only the translation — no preamble. The target language is stated in the task.";
 
 const EXPLAINER_ROLE =
-  "You are a knowledgeable tutor. Explain the given text clearly and concisely. Use plain prose; no markdown headings.";
+  "You are a knowledgeable tutor. Always respond in the same language as the input text (e.g. Chinese input → Chinese output). Use plain prose; no markdown headings.";
 
 export const ACTIONS: AIAction[] = [
   {
     id: "rewrite",
     labelKey: "ai.rewrite",
     system: EDITOR_ROLE,
-    user: "Rewrite the following text to improve clarity and flow while keeping the meaning and tone. Reply with only the rewritten text.",
+    user: "改写下面的文字，提高清晰度与流畅度，保持原意与语气不变。只输出改写后的文本。",
     resultMode: "replace",
   },
   {
     id: "shorten",
     labelKey: "ai.shorten",
     system: EDITOR_ROLE,
-    user: "Rewrite the following text in fewer words while keeping the meaning. Reply with only the rewritten text, no preamble.",
+    user: "把下面的文字改写得更简洁，保留全部关键信息。只输出改写后的文本。",
     resultMode: "replace",
   },
   {
     id: "expand",
     labelKey: "ai.expand",
     system: EDITOR_ROLE,
-    user: "Expand the following text with more detail and context while keeping the original tone. Reply with only the expanded text.",
+    user: "扩写下面的文字，补充细节与上下文，保持原有语气。只输出扩写后的文本。",
     resultMode: "replace",
   },
   {
     id: "translateEn",
     labelKey: "ai.translateEn",
     system: TRANSLATOR_ROLE,
-    user: "Translate the following text to natural, idiomatic English. Reply with only the translation.",
+    user: "把下面的文字翻译成地道、自然的英语。只输出译文。",
     resultMode: "replace",
   },
   {
     id: "translateZh",
     labelKey: "ai.translateZh",
     system: TRANSLATOR_ROLE,
-    user: "把下面这段文字翻译成自然、流畅的中文。只回复译文，不要其他说明。",
+    user: "把下面的文字翻译成自然、流畅的中文。只输出译文。",
     resultMode: "replace",
   },
   {
     id: "summarize",
     labelKey: "ai.summarize",
     system: EXPLAINER_ROLE,
-    user: "Summarize the following text in a few concise sentences. Reply with only the summary.",
+    user: "用几句简洁的话总结下面的文字要点。只输出总结。",
     resultMode: "insert",
   },
   {
     id: "explain",
     labelKey: "ai.explain",
     system: EXPLAINER_ROLE,
-    user: "Explain the following text in plain language for a general reader. Reply with only the explanation.",
+    user: "用通俗的语言向普通读者解释下面的文字。只输出解释。",
     resultMode: "insert",
   },
   {
