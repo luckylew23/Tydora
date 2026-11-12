@@ -292,6 +292,11 @@
   top: 0;
 }
 
+/* 更多菜单打开期间冻结顶栏：自动收起会把菜单整体顶走、hover 断掉导致子菜单消失 */
+.editor-container.more-menu-open .editor-topbar {
+  top: 0 !important;
+}
+
 .editor-bottom-controls .editor-mode-toggle {
   background: var(--bg-primary, rgba(255, 255, 255, 0.9));
   border: none;
@@ -1974,6 +1979,55 @@
 .editor-topbar-more-menu-divider {
   height: 1px;
   margin: var(--menu-divider-margin-y) 0;
+  background: var(--border, #e0e0e0);
+}
+
+/* AI 助手菜单项 + 悬停子菜单（更多菜单内） */
+.editor-topbar-more-menu-item.ai-more-item {
+  position: relative;
+}
+
+.ai-more-caret {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+
+.ai-submenu {
+  display: none;
+  position: absolute;
+  /* 更多按钮贴屏幕右上角：向左展开，且与父项无缝衔接（不留 hover 死区） */
+  right: 100%;
+  top: -6px;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e0e0e0);
+  background: var(--background, #fff);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  z-index: 20;
+}
+
+.ai-more-item:hover .ai-submenu {
+  display: block;
+}
+
+.ai-submenu-item {
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  color: var(--text, inherit);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-submenu-item:hover {
+  background: var(--background-hover, rgba(0, 0, 0, 0.05));
+}
+
+.ai-submenu-divider {
+  height: 1px;
+  margin: 4px 6px;
   background: var(--border, #e0e0e0);
 }
 

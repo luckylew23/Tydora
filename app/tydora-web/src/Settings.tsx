@@ -11,6 +11,7 @@ import CliMcpSettings from "./cli/CliMcpSettings";
 import { findSettingsSearchItem } from "./settings/settingsSearchIndex";
 import { loadCanvasSettings, saveCanvasSettings, type CanvasSettings } from "./Canvas/canvas-settings";
 import { TerminalSettingsContent } from "./Terminal/TerminalSettingsContent";
+import { AISettingsContent } from "./ai/AISettingsContent";
 import { VimSettingsPanel } from "./vim/settings/VimSettingsPanel";
 import { loadTerminalSettings, type TerminalSettings } from "./Terminal/terminal-settings";
 import {
@@ -50,7 +51,7 @@ import "./Settings.css";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-type SettingsTab = "general" | "editor" | "theme" | "shortcuts" | "mindmap" | "graph" | "image" | "canvas" | "terminal" | "publish" | "vim" | "cli" | "about";
+type SettingsTab = "general" | "editor" | "theme" | "shortcuts" | "mindmap" | "graph" | "image" | "canvas" | "terminal" | "publish" | "vim" | "cli" | "ai" | "about";
 
 interface NavItem {
   id: SettingsTab;
@@ -3351,6 +3352,14 @@ export default function Settings({ onClose }: { onClose?: () => void }) {
       title: t("settings.tabs.groupFeatures"),
       items: [
         {
+          id: "ai", label: t("settings.tabs.ai"), icon: (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2l1.9 5.7a2 2 0 0 0 1.3 1.3L21 11l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 20l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 11l5.8-2a2 2 0 0 0 1.3-1.3L12 2z" />
+              <path d="M19 15l.7 2.1a1 1 0 0 0 .7.7L22.5 18l-2.1.7a1 1 0 0 0-.7.7L19 21.5l-.7-2.1a1 1 0 0 0-.7-.7L15.5 18l2.1-.7a1 1 0 0 0 .7-.7L19 15z" />
+            </svg>
+          ), searchTerms: ["AI", "改写", "翻译", "总结", "解释", "人工智能", "provider", "模型", "API key"]
+        },
+        {
           id: "mindmap", label: t("settings.tabs.mindmap"), icon: (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M20 4a1 1 0 0 1 0 2h-2.7a7.4 7.4 0 0 0-7.2 6H20a1 1 0 0 1 0 2h-9.9a7.4 7.4 0 0 0 7.2 6H20a1 1 0 0 1 0 2h-2.7a9.4 9.4 0 0 1-9.2-8H4a1 1 0 0 1 0-2h4.1a9.4 9.4 0 0 1 9.2-8H20z" />
@@ -3509,6 +3518,7 @@ export default function Settings({ onClose }: { onClose?: () => void }) {
             {activeTab === "general" && (
               <GeneralSettingsContent settings={generalSettings} onChange={setGeneralSettings} />
             )}
+            {activeTab === "ai" && <AISettingsContent />}
             {activeTab === "editor" && (
               <EditorSettingsContent settings={generalSettings} onChange={setGeneralSettings} />
             )}
