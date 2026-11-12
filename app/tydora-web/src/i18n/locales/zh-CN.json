@@ -1320,8 +1320,6 @@
     "rewrite": "改写",
     "shorten": "精简",
     "expand": "扩写",
-    "translateEn": "译成英文",
-    "translateZh": "译成中文",
     "summarize": "总结",
     "explain": "解释",
     "custom": "自定义指令",
@@ -1334,7 +1332,6 @@
     "reject": "拒绝",
     "reroll": "重试",
     "accept": "替换",
-    "insert": "插入",
     "noKey": "尚未配置 {{provider}} 的 API Key。",
     "setKey": "去设置 AI",
     "scope": "处理范围",
@@ -1342,6 +1339,9 @@
     "scopeDocument": "全文",
     "scopeSelectionHint": "将处理选中的 {{count}} 字",
     "scopeDocumentHint": "将处理全文（共 {{count}} 字）",
-    "scopeNoSelection": "未选中文字：请先在正文中选中一段文字，或改用「全文」"
+    "scopeNoSelection": "未选中文字：请先在正文中选中一段文字，或改用「全文」",
+    "translate": "中英翻译",
+    "saveAs": "另存为",
+    "noSourceFile": "原文件尚未保存到磁盘，无法另存为"
   }
 }

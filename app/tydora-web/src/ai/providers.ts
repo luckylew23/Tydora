@@ -81,10 +81,12 @@ export interface AIAction {
   /** 用户指令；选区由 Rust 拼接。 */
   user: string;
   /**
-   * 结果去向：`replace` = 覆盖选区（改写/翻译）；`insert` = 插入光标处
-   * （总结/解释——产出不该销毁原始内容）。
+   * 结果去向：`replace` = 覆盖选区/全文（改写/精简/扩写）；
+   * `save` = 输出另存为新 md 文件（原文件不动：翻译/总结/解释/自定义）。
    */
-  resultMode: "replace" | "insert";
+  resultMode: "replace" | "save";
+  /** `save` 模式的文件名后缀（原文件名后追加，如 -总结）。 */
+  saveSuffix?: string;
   /** 是否需要用户输入自定义指令。 */
   custom?: boolean;
 }
@@ -93,7 +95,7 @@ const EDITOR_ROLE =
   "You are an expert editor. Always respond in the same language as the input text (e.g. Chinese input → Chinese output). Reply with only the rewritten text — no preamble, no explanations, no markdown fences.";
 
 const TRANSLATOR_ROLE =
-  "You are a professional translator. Preserve the original markdown formatting, links, and code blocks. Reply with only the translation — no preamble. The target language is stated in the task.";
+  "You are a professional translator. Detect the dominant language of the input text: if it is mainly Chinese, translate it into natural, idiomatic English; otherwise translate it into natural, fluent Chinese. Preserve the original markdown formatting, links, and code blocks. Reply with only the translation — no preamble.";
 
 const EXPLAINER_ROLE =
   "You are a knowledgeable tutor. Always respond in the same language as the input text (e.g. Chinese input → Chinese output). Use plain prose; no markdown headings.";
@@ -121,39 +123,36 @@ export const ACTIONS: AIAction[] = [
     resultMode: "replace",
   },
   {
-    id: "translateEn",
-    labelKey: "ai.translateEn",
+    id: "translate",
+    labelKey: "ai.translate",
     system: TRANSLATOR_ROLE,
-    user: "把下面的文字翻译成地道、自然的英语。只输出译文。",
-    resultMode: "replace",
-  },
-  {
-    id: "translateZh",
-    labelKey: "ai.translateZh",
-    system: TRANSLATOR_ROLE,
-    user: "把下面的文字翻译成自然、流畅的中文。只输出译文。",
-    resultMode: "replace",
+    user: "按系统指令检测语言并翻译下面的文字。只输出译文。",
+    resultMode: "save",
+    saveSuffix: "-翻译",
   },
   {
     id: "summarize",
     labelKey: "ai.summarize",
     system: EXPLAINER_ROLE,
     user: "用几句简洁的话总结下面的文字要点。只输出总结。",
-    resultMode: "insert",
+    resultMode: "save",
+    saveSuffix: "-总结",
   },
   {
     id: "explain",
     labelKey: "ai.explain",
     system: EXPLAINER_ROLE,
     user: "用通俗的语言向普通读者解释下面的文字。只输出解释。",
-    resultMode: "insert",
+    resultMode: "save",
+    saveSuffix: "-解释",
   },
   {
     id: "custom",
     labelKey: "ai.custom",
     system: EDITOR_ROLE,
     user: "",
-    resultMode: "replace",
+    resultMode: "save",
+    saveSuffix: "-自定义",
     custom: true,
   },
 ];

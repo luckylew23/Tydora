@@ -1320,8 +1320,6 @@
     "rewrite": "Rewrite",
     "shorten": "Shorten",
     "expand": "Expand",
-    "translateEn": "Translate to English",
-    "translateZh": "Translate to Chinese",
     "summarize": "Summarize",
     "explain": "Explain",
     "custom": "Custom prompt",
@@ -1334,7 +1332,6 @@
     "reject": "Reject",
     "reroll": "Retry",
     "accept": "Replace",
-    "insert": "Insert",
     "noKey": "No API key configured for {{provider}}.",
     "setKey": "Open AI Settings",
     "scope": "Scope",
@@ -1342,6 +1339,9 @@
     "scopeDocument": "Whole document",
     "scopeSelectionHint": "Will process the {{count}} selected characters",
     "scopeDocumentHint": "Will process the whole document ({{count}} characters)",
-    "scopeNoSelection": "No text selected: select some text in the document first, or use Whole document"
+    "scopeNoSelection": "No text selected: select some text in the document first, or use Whole document",
+    "translate": "CN ↔ EN Translation",
+    "saveAs": "Save as",
+    "noSourceFile": "The source file is not saved on disk yet; cannot save as a new file"
   }
 }

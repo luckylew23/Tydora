@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { ACTIONS, providerById, type AIAction } from "./providers";
@@ -35,6 +36,8 @@ export interface AIOpenDetail {
   document: string;
   /** 强制处理范围；缺省 = 有选区用「选中文字」，否则「全文」。 */
   scope?: "selection" | "document";
+  /** 原文件路径（另存为时用于定位目录与文件名）。 */
+  sourcePath?: string | null;
 }
 
 /** 接受结果：替换选区（App → EditorHandle.replaceAt）。 */
@@ -51,10 +54,10 @@ export interface AIAcceptDocDetail {
   replacement: string;
 }
 
-/** 接受结果：插入光标处（App → EditorHandle.insertTextAtCursor）。 */
-export const AI_INSERT_EVENT = "zmd-ai-insert";
-export interface AIInsertDetail {
-  text: string;
+/** 接受结果：输出另存为新 md 文件（App 打开新文件）。 */
+export const AI_SAVE_EVENT = "zmd-ai-save";
+export interface AISaveDetail {
+  path: string;
 }
 
 interface ChunkPayload { requestId: string; chunk: string; }
@@ -77,6 +80,10 @@ export function AIRewriteOverlay() {
   const [scope, setScope] = useState<"selection" | "document">("selection");
   /** 打开时预捕获的全文（模态期间文档不变）。 */
   const [docText, setDocText] = useState("");
+  /** 原文件路径（另存为定位目录/文件名；无保存过的文件为 null）。 */
+  const [sourcePath, setSourcePath] = useState<string | null>(null);
+  /** 另存为写入中。 */
+  const [saving, setSaving] = useState(false);
   const [action, setAction] = useState<AIAction | null>(null);
   const [customPrompt, setCustomPrompt] = useState("");
   const [proposed, setProposed] = useState("");
@@ -113,6 +120,8 @@ export function AIRewriteOverlay() {
     setOpen(false);
     setRange(null);
     setDocText("");
+    setSourcePath(null);
+    setSaving(false);
     setScope("selection");
     setAction(null);
     setCustomPrompt("");
@@ -130,6 +139,7 @@ export function AIRewriteOverlay() {
       const hasSel = !!detail.selection;
       setRange(hasSel ? { from: detail.from, to: detail.to, selection: detail.selection } : null);
       setDocText(detail.document);
+      setSourcePath(detail.sourcePath ?? null);
       // 范围：外部强制 > 有选区默认「选中文字」 > 无选区「全文」（顶部提醒先选文字）
       setScope(hasSel ? (detail.scope === "document" ? "document" : "selection") : "document");
       setCustomPrompt("");
@@ -203,7 +213,8 @@ export function AIRewriteOverlay() {
       if ((ev.metaKey || ev.ctrlKey) && ev.key === "Enter") {
         if (proposed && !streaming && !streamingError) {
           ev.preventDefault();
-          onAccept();
+          if (action?.resultMode === "save") void onSaveAs();
+          else onAccept();
         }
       }
     };
@@ -263,12 +274,12 @@ export function AIRewriteOverlay() {
 
   function onAccept(): void {
     if (!action || !proposed) return;
-    if (action.resultMode === "insert") {
-      // 总结/解释：插入光标处（不覆盖原文），与处理范围无关
-      window.dispatchEvent(
-        new CustomEvent<AIInsertDetail>(AI_INSERT_EVENT, { detail: { text: proposed } }),
-      );
-    } else if (scope === "document") {
+    if (action.resultMode === "save") {
+      // 翻译/总结/解释/自定义：输出另存为新 md 文件（原文件不动）
+      void onSaveAs();
+      return;
+    }
+    if (scope === "document") {
       // 全文：整篇替换（EditorHandle.replaceAllContent，单步可撤销）
       window.dispatchEvent(
         new CustomEvent<AIAcceptDocDetail>(AI_ACCEPT_DOC_EVENT, { detail: { replacement: proposed } }),
@@ -282,6 +293,33 @@ export function AIRewriteOverlay() {
       );
     }
     close();
+  }
+
+  /** save 模式：输出写入原文件目录下的「原文件名-后缀.md」，成功后打开新文件。 */
+  async function onSaveAs(): Promise<void> {
+    if (!proposed) return;
+    const suffix = action?.saveSuffix ?? "-AI";
+    if (!sourcePath) {
+      setStreamingError(t("ai.noSourceFile"));
+      return;
+    }
+    const sep = Math.max(sourcePath.lastIndexOf("\\"), sourcePath.lastIndexOf("/"));
+    const dir = sep > 0 ? sourcePath.slice(0, sep) : "";
+    const base = sourcePath.slice(sep + 1).replace(/\.[^.]+$/, "");
+    const newPath = `${dir}/${base}${suffix}.md`;
+    setSaving(true);
+    try {
+      await writeTextFile(newPath, proposed);
+      window.dispatchEvent(
+        new CustomEvent<AISaveDetail>(AI_SAVE_EVENT, { detail: { path: newPath } }),
+      );
+      close();
+    } catch (err) {
+      // 不关闭浮层：错误就地显示在错误区
+      setStreamingError(String(err));
+    } finally {
+      setSaving(false);
+    }
   }
 
   function openSettingsAI(): void {
@@ -399,7 +437,9 @@ export function AIRewriteOverlay() {
             <div className="ai-overlay__columns">
               <div className="ai-overlay__col">
                 <div className="ai-overlay__col-head">{t("ai.original")}</div>
-                <div className="ai-overlay__col-body orig">
+                <div
+                  className={`ai-overlay__col-body${action?.resultMode === "replace" ? " orig" : ""}`}
+                >
                   {scope === "document" ? docText : range?.selection}
                 </div>
               </div>
@@ -420,10 +460,10 @@ export function AIRewriteOverlay() {
               </button>
               <button
                 className="ai-overlay__btn ai-overlay__btn--primary"
-                disabled={streaming || !proposed || !!streamingError}
-                onClick={onAccept}
+                disabled={streaming || saving || !proposed || !!streamingError}
+                onClick={() => (action?.resultMode === "save" ? void onSaveAs() : onAccept())}
               >
-                {action?.resultMode === "insert" ? t("ai.insert") : t("ai.accept")}
+                {action?.resultMode === "save" ? t("ai.saveAs") : t("ai.accept")}
                 <span className="ai-overlay__kbd">⌘↵</span>
               </button>
             </div>

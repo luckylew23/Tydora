@@ -71,7 +71,7 @@ const EmbeddedCanvasView = lazy(async () => {
 });
 import { BookmarkDialog, BookmarksService } from "./Bookmarks";
 import FindReplaceDialog from "./components/FindReplaceDialog";
-import { AIRewriteOverlay, AI_OPEN_EVENT, AI_ACCEPT_EVENT, AI_ACCEPT_DOC_EVENT, AI_INSERT_EVENT, type AIOpenDetail, type AIAcceptDetail, type AIAcceptDocDetail, type AIInsertDetail } from "./ai/AIRewriteOverlay";
+import { AIRewriteOverlay, AI_OPEN_EVENT, AI_ACCEPT_EVENT, AI_ACCEPT_DOC_EVENT, AI_SAVE_EVENT, type AIOpenDetail, type AIAcceptDetail, type AIAcceptDocDetail } from "./ai/AIRewriteOverlay";
 import { cleanAIArtifacts } from "./ai/cleanAi";
 import { loadAISettings } from "./ai/aiSettings";
 import "./App.css";
@@ -423,6 +423,9 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   const editorHandleRef = useRef<EditorHandle>(null);
   // AI 浮层打开时捕获的编辑器手柄（模态期间不会切换窗格，直接用引用保活）
   const aiActiveHandleRef = useRef<EditorHandle | null>(null);
+  // 当前文件路径（AI 另存为时定位原文件目录）；fileName 在上方由 activeBuffer 派生
+  const currentFilePathRef = useRef<string | null>(null);
+  currentFilePathRef.current = fileName;
 
 
   // 更新指定缓冲（patch 可为对象或基于旧值的函数）
@@ -798,6 +801,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
           selection: sel?.text ?? "",
           document: docText,
           scope: forceScope,
+          sourcePath: currentFilePathRef.current,
         },
       }),
     );
@@ -823,7 +827,7 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
     }
   }, []);
 
-  // AI 浮层结果回写：接受 → 原位替换（单步可撤销）；全文 → 整篇替换；插入 → 光标处
+  // AI 浮层结果回写：接受 → 原位替换（单步可撤销）；全文 → 整篇替换
   useEffect(() => {
     const onAccept = (e: Event) => {
       const d = (e as CustomEvent<AIAcceptDetail>).detail;
@@ -842,20 +846,11 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
         if (cm) cm.replaceRange(0, cm.getValue().length, d.replacement);
       }
     };
-    const onInsert = (e: Event) => {
-      const d = (e as CustomEvent<AIInsertDetail>).detail;
-      if (!d?.text) return;
-      const h = aiActiveHandleRef.current;
-      if (h) h.insertTextAtCursor(d.text);
-      else codeMirrorRef.current?.insertTextAtCursor(d.text);
-    };
     window.addEventListener(AI_ACCEPT_EVENT, onAccept);
     window.addEventListener(AI_ACCEPT_DOC_EVENT, onAcceptDoc);
-    window.addEventListener(AI_INSERT_EVENT, onInsert);
     return () => {
       window.removeEventListener(AI_ACCEPT_EVENT, onAccept);
       window.removeEventListener(AI_ACCEPT_DOC_EVENT, onAcceptDoc);
-      window.removeEventListener(AI_INSERT_EVENT, onInsert);
     };
   }, []);
 
@@ -2130,6 +2125,17 @@ function App({ initialFilePath, initialVaultPath }: { initialFilePath?: string |
   }, [activeVaultIndex, vaults, t, updateBuffer]);
   // 转发 openFile 给在上方定义的 handleSelectFile（避免“先使用后声明”）
   openFileRef.current = openFile;
+
+  // AI「另存为」完成 → 打开新文件（经 handleSelectFile：当前缓冲有未保存修改时正常弹确认）
+  useEffect(() => {
+    const onOpenSaved = (e: Event) => {
+      const d = (e as CustomEvent<{ path: string }>).detail;
+      if (!d?.path) return;
+      void handleSelectFile(d.path);
+    };
+    window.addEventListener(AI_SAVE_EVENT, onOpenSaved as EventListener);
+    return () => window.removeEventListener(AI_SAVE_EVENT, onOpenSaved as EventListener);
+  }, [handleSelectFile]);
 
   const openFileByType = useCallback((path: string) => {
     const name = path.split(/[/\\]/).pop() || path;
