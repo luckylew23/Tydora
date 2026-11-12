@@ -366,26 +366,21 @@ pub async fn ai_list_models(provider: String, base_url: Option<String>) -> Model
     // keyless 端点允许无 key；有 key（反代 token）则带上
     let key = keycmd(move || key_read(&provider)).await.unwrap_or_default();
 
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .connect_timeout(Duration::from_secs(6))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return ModelProbe {
-                ok: false,
-                models: vec![],
-                url: String::new(),
-                error: Some(e.to_string()),
-            }
-        }
-    };
-
     match format.as_str() {
         "openai" => {
             let base = openai_base(base_url.as_deref());
             let url = format!("{base}/models");
+            let client = match http_client_for(&base) {
+                Ok(c) => c,
+                Err(e) => {
+                    return ModelProbe {
+                        ok: false,
+                        models: vec![],
+                        url,
+                        error: Some(e),
+                    }
+                }
+            };
             let resp = match with_optional_bearer(client.get(&url), &key).send().await {
                 Ok(r) => r,
                 Err(e) => {
@@ -393,7 +388,7 @@ pub async fn ai_list_models(provider: String, base_url: Option<String>) -> Model
                         ok: false,
                         models: vec![],
                         url,
-                        error: Some(format!("{e}")),
+                        error: Some(error_chain(&e)),
                     }
                 }
             };
@@ -444,6 +439,17 @@ pub async fn ai_list_models(provider: String, base_url: Option<String>) -> Model
         "ollama" => {
             let base = ollama_base(base_url.as_deref());
             let url = format!("{base}/api/tags");
+            let client = match http_client_for(&base) {
+                Ok(c) => c,
+                Err(e) => {
+                    return ModelProbe {
+                        ok: false,
+                        models: vec![],
+                        url,
+                        error: Some(e),
+                    }
+                }
+            };
             let resp = match client.get(&url).send().await {
                 Ok(r) => r,
                 Err(e) => {
@@ -451,7 +457,7 @@ pub async fn ai_list_models(provider: String, base_url: Option<String>) -> Model
                         ok: false,
                         models: vec![],
                         url,
-                        error: Some(format!("{e}")),
+                        error: Some(error_chain(&e)),
                     }
                 }
             };
@@ -573,18 +579,15 @@ pub async fn ai_verify_key(
     } else {
         key_read(&provider).map_err(|e| format!("尚未保存密钥: {e}"))?
     };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
     match format.as_str() {
         "openai" => {
             let base = openai_base(base_url.as_deref());
             let url = format!("{base}/models");
+            let client = http_client_for(&base)?;
             let res = with_optional_bearer(client.get(&url), &key)
                 .send()
                 .await
-                .map_err(|e| format!("网络错误: {e}"))?;
+                .map_err(|e| format!("网络错误: {}", error_chain(&e)))?;
             let status = res.status();
             if status.is_success() {
                 let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
@@ -622,11 +625,12 @@ pub async fn ai_verify_key(
         "ollama" => {
             let base = ollama_base(base_url.as_deref());
             let url = format!("{base}/api/tags");
+            let client = http_client_for(&base)?;
             let res = client
                 .get(&url)
                 .send()
                 .await
-                .map_err(|e| format!("网络错误: {e}（Ollama 在运行吗？）"))?;
+                .map_err(|e| format!("网络错误: {}（Ollama 在运行吗？）", error_chain(&e)))?;
             if res.status().is_success() {
                 let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
                 let n = body
@@ -657,6 +661,58 @@ fn http_client() -> Result<reqwest::Client, String> {
         .connect_timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| format!("HTTP 客户端初始化失败: {e}"))
+}
+
+/// 目标是否为本机回环地址。回环请求走系统/环境代理毫无意义且常被代理
+/// 工具劫持：reqwest 0.12.5+ 默认读取 Windows 系统代理（注册表），Clash
+/// 类工具开着系统代理时 127.0.0.1 请求会被塞进代理端口而失败——这正是
+/// 「soloMD（旧 reqwest 不读系统代理）能连、Tydora 不能连」的根因。
+/// 回环目标一律 no_proxy 直连；远程 provider 不受影响（墙内用户照常走代理）。
+fn is_loopback_base(base: &str) -> bool {
+    let after_scheme = base.splitn(2, "://").nth(1).unwrap_or(base);
+    let host = after_scheme
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .rsplit('@')
+        .next()
+        .unwrap_or("");
+    let hostname = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    hostname.eq_ignore_ascii_case("localhost")
+        || hostname.eq_ignore_ascii_case("::1")
+        || hostname
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+/// 按目标地址构建客户端：回环目标 no_proxy 直连。
+fn http_client_for(base: &str) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .connect_timeout(Duration::from_secs(20));
+    if is_loopback_base(base) {
+        builder = builder.no_proxy();
+    }
+    builder
+        .build()
+        .map_err(|e| format!("HTTP 客户端初始化失败: {e}"))
+}
+
+/// 展开错误链（reqwest 顶层 Display 只有 "error sending request for url"，
+/// 真实原因 Connection refused / proxy / timeout 在 source 链上）。
+fn error_chain(e: &reqwest::Error) -> String {
+    let mut s = e.to_string();
+    let mut src = std::error::Error::source(e);
+    while let Some(c) = src {
+        s.push_str(&format!(" ← {c}"));
+        src = c.source();
+    }
+    s
 }
 
 fn cancelled() -> String {
@@ -775,12 +831,12 @@ async fn run_openai(
         ],
     });
 
-    let client = http_client()?;
+    let client = http_client_for(&base)?;
     let resp = with_optional_bearer(client.post(&url), api_key)
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("请求失败: {e}"))?;
+        .map_err(|e| format!("请求失败: {}", error_chain(&e)))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -857,13 +913,13 @@ async fn run_ollama(
         ],
     });
 
-    let client = http_client()?;
+    let client = http_client_for(&base)?;
     let resp = client
         .post(&url)
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("请求失败: {e}（Ollama 在运行吗？）"))?;
+        .map_err(|e| format!("请求失败: {}（Ollama 在运行吗？）", error_chain(&e)))?;
 
     if !resp.status().is_success() {
         let status = resp.status();

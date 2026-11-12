@@ -203,6 +203,50 @@ export function AISettingsContent() {
             />
           </div>
         </div>
+        {/* API Key：紧贴接口地址下方（填完 URL → 填 Key → 保存并验证 → 获取模型列表） */}
+        <div className="canvas-settings-row">
+          <div className="canvas-settings-row-label">
+            <span className="canvas-settings-row-title">{t("settings.ai.apiKey")}</span>
+            <span className="canvas-settings-row-desc">
+              {isKeyless
+                ? t("settings.ai.apiKeyOptionalDesc")
+                : `${t("settings.ai.apiKeyDesc")}${hasKey ? " · " + t("settings.ai.keyPresent") : ""}`}
+              {provider?.signupUrl && (
+                <>
+                  {" "}
+                  <a href={provider.signupUrl} target="_blank" rel="noreferrer" className="settings-link">
+                    {t("settings.ai.getKey")}
+                  </a>
+                </>
+              )}
+            </span>
+          </div>
+          <div className="canvas-settings-row-control ai-key-row">
+            <input
+              className="settings-input"
+              type="password"
+              value={keyDraft}
+              placeholder={isKeyless ? t("settings.ai.keyOptional") : t("settings.ai.keyPlaceholder")}
+              onChange={(e) => setKeyDraft(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void saveAndVerify()}
+            />
+            <button
+              className="settings-button"
+              disabled={busy}
+              onClick={() => void saveAndVerify()}
+            >
+              {t("settings.ai.saveKey")}
+            </button>
+            {!isKeyless && hasKey && (
+              <button className="settings-button" disabled={busy} onClick={() => void clearKey()}>
+                {t("settings.ai.clearKey")}
+              </button>
+            )}
+          </div>
+          {keyMsg && (
+            <div className={`ai-key-msg${keyMsg.ok ? " ok" : " err"}`}>{keyMsg.text}</div>
+          )}
+        </div>
         {/* 探测状态行：胶囊 + 已探测地址 + 获取/刷新按钮 */}
         <div className="canvas-settings-row ai-probe-row">
           <div className="ai-probe-status">
@@ -258,53 +302,6 @@ export function AISettingsContent() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* 密钥 */}
-      <div className="canvas-settings-card">
-        <div className="canvas-settings-row">
-          <div className="canvas-settings-row-label">
-            <span className="canvas-settings-row-title">{t("settings.ai.apiKey")}</span>
-            <span className="canvas-settings-row-desc">
-              {isKeyless
-                ? t("settings.ai.apiKeyOptionalDesc")
-                : `${t("settings.ai.apiKeyDesc")}${hasKey ? " · " + t("settings.ai.keyPresent") : ""}`}
-              {provider?.signupUrl && (
-                <>
-                  {" "}
-                  <a href={provider.signupUrl} target="_blank" rel="noreferrer" className="settings-link">
-                    {t("settings.ai.getKey")}
-                  </a>
-                </>
-              )}
-            </span>
-          </div>
-          <div className="canvas-settings-row-control ai-key-row">
-            <input
-              className="settings-input"
-              type="password"
-              value={keyDraft}
-              placeholder={isKeyless ? t("settings.ai.keyOptional") : t("settings.ai.keyPlaceholder")}
-              onChange={(e) => setKeyDraft(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void saveAndVerify()}
-            />
-            <button
-              className="settings-button"
-              disabled={busy}
-              onClick={() => void saveAndVerify()}
-            >
-              {t("settings.ai.saveKey")}
-            </button>
-            {!isKeyless && hasKey && (
-              <button className="settings-button" disabled={busy} onClick={() => void clearKey()}>
-                {t("settings.ai.clearKey")}
-              </button>
-            )}
-          </div>
-        </div>
-        {keyMsg && (
-          <div className={`ai-key-msg${keyMsg.ok ? " ok" : " err"}`}>{keyMsg.text}</div>
-        )}
       </div>
 
       <div className="canvas-settings-card">
