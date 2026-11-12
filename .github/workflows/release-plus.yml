@@ -16,7 +16,11 @@ on:
       plus_number:
         description: '构建序号 N（应用版本 0.3.3+N，tag v0.3.3-plus.N）'
         required: true
-        default: '6'
+        default: '10'
+      prerelease:
+        description: '是否预发布（true/false，默认正式发布）'
+        required: false
+        default: 'false'
   # 推送 v0.3.3-plus.N 形式的 tag 直接触发（workflow 文件位于 tag 指向的
   # tydora-plus 提交上，无需出现在默认分支即可运行）
   push:
@@ -236,7 +240,9 @@ jobs:
           } > RELEASE_BODY.md
 
       # 直接创建预发布并上传全部资源
-      - name: Create prerelease and upload assets
+      # tag 推送触发时按 inputs.prerelease 缺省走正式发布；
+      # workflow_dispatch 可用 prerelease 输入切换预发布
+      - name: Create release and upload assets
         uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -246,7 +252,7 @@ jobs:
           name: ${{ steps.meta.outputs.name }}
           body_path: RELEASE_BODY.md
           draft: false
-          prerelease: true
+          prerelease: ${{ inputs.prerelease == 'true' }}
           preserve_order: true
           fail_on_unmatched_files: false
           files: |
