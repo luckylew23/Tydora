@@ -96,7 +96,7 @@ CARGO_HOME=/tmp/tydora-cargo-home npm run tauri build -- --config <覆盖文件>
 
 | 症状 | 根因 | 处置 |
 |---|---|---|
-| Windows AI 报 `error sending request` | 系统代理劫持回环请求 | plus.7 起已修（no_proxy）；排查看红色胶囊错误链（`Connection refused (os error 11161)`=服务没起） |
+| Windows AI 报 `error sending request` | 系统代理劫持回环请求 | plus.7 起已修（no_proxy）；排查看红色胶囊错误链（`Connection refused (os error 11161)`=服务没起）；完整复盘见 `docs/ai-local-api-proxy-issue.md` |
 | 标题切新文件、内容停留上一篇 | 同步 effect 的 isInternalRef 残留吞掉文件切换 | plus.8 起已修（fileChanged 无条件优先）；上游候选修复 |
 | cargo 直连卡死 | crates.io 网络 | rsproxy 临时 CARGO_HOME |
 | DMG 打包 AppleEvent 超时 | 无 GUI 会话 | 纯 hdiutil |
