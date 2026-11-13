@@ -28,6 +28,17 @@ export interface EditorHandle {
   selectAndScroll: (from: number, to: number) => void;
   /** 替换指定范围内容 */
   replaceAt: (from: number, to: number, replacement: string) => void;
+  /**
+   * 当前非空选区；collapsed 时返回 null。
+   * 语义与 findMatches/replaceAt 同源：IR = PM 位置 + 渲染文本，
+   * SV = Markdown 源码偏移 + 源码文本（AI 改写用）。
+   */
+  getSelectionRange: () => { from: number; to: number; text: string } | null;
+  /**
+   * 全文替换（AI「全文」范围）：整体 setContent，用户编辑语义
+   * （onChange 回传、单步可撤销）。不能走 setValue——那是外部同步语义。
+   */
+  replaceAllContent: (replacement: string) => void;
 }
 
 export type EditorMode = "ir" | "sv";

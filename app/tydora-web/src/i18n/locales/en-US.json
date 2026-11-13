@@ -106,7 +106,8 @@
       "vim": "Vim Mode",
       "groupAbout": "About",
       "about": "About",
-      "cli": "CLI & MCP"
+      "cli": "CLI & MCP",
+      "ai": "AI"
     },
     "terminal": {
       "colorScheme": "Color Scheme",
@@ -621,6 +622,38 @@
       "copy": "Copy config",
       "copied": "Copied",
       "noVault": "Open a vault first — the config will include its path automatically."
+    },
+    "ai": {
+      "enable": "Enable AI Assistant",
+      "enableDesc": "Invoke AI rewrite/translate/summarize via the More menu or Ctrl+Shift+M",
+      "provider": "Provider",
+      "providerDesc": "Pick an AI provider; the key is stored in the OS keychain",
+      "model": "Model",
+      "modelDesc": "Leave empty to use the default model",
+      "modelPlaceholder": "e.g. deepseek-chat",
+      "baseUrl": "API Base URL",
+      "baseUrlDesc": "Override the default endpoint (self-hosted / custom port)",
+      "apiKey": "API Key",
+      "apiKeyDesc": "Stored only in the local OS keychain, never uploaded",
+      "apiKeyOptionalDesc": "Optional for local/self-hosted endpoints; fill in if a reverse proxy token fronts it",
+      "keyPlaceholder": "Paste API key",
+      "keyOptional": "Optional",
+      "keyPresent": "Saved",
+      "keySaved": "Saved to the OS keychain",
+      "keyCleared": "Cleared",
+      "saveKey": "Save & verify",
+      "clearKey": "Clear",
+      "verify": "Verify",
+      "getKey": "Get a key ↗",
+      "usage": "Usage",
+      "usageDesc": "Select text → More menu AI Assistant (or Ctrl+Shift+M) → pick an action → accept to replace in place (undoable)",
+      "probeConnected": "Connected · {{count}} models",
+      "probeFailed": "Connection failed",
+      "probedAt": "probed {{url}}",
+      "refresh": "Refresh",
+      "fetchModels": "Fetch models",
+      "probing": "Probing…",
+      "modelSelectPlaceholder": "Select model…"
     }
   },
   "app": {
@@ -658,7 +691,12 @@
       "mindmap": "Mind Map",
       "graph": "Graph",
       "exporting": "Exporting…",
-      "exportAndCopy": "Copy & Export"
+      "exportAndCopy": "Copy & Export",
+      "aiAssistant": "AI Assistant",
+      "aiSettings": "AI Settings",
+      "aiProcessSelection": "AI on selection",
+      "aiProcessDocument": "AI on whole document",
+      "aiClean": "Clean AI formatting artifacts"
     },
     "mode": {
       "current": "Current: {{mode}}, click to switch (Ctrl+/)"
@@ -959,7 +997,7 @@
     "toast": {
       "pathCopied": "Path copied to clipboard",
       "duplicated": "Duplicate created",
-    "duplicatedAndCopied": "Duplicate created and copied to clipboard, paste it in your file manager",
+      "duplicatedAndCopied": "Duplicate created and copied to clipboard, paste it in your file manager",
       "fileCopiedToClipboard": "File copied to clipboard, paste it in your file manager"
     },
     "bookmarks": {
@@ -1276,5 +1314,34 @@
       "desc": "Open a local folder as a vault.",
       "dialogTitle": "Select a local folder as a vault"
     }
+  },
+  "ai": {
+    "title": "AI Assistant",
+    "rewrite": "Rewrite",
+    "shorten": "Shorten",
+    "expand": "Expand",
+    "summarize": "Summarize",
+    "explain": "Explain",
+    "custom": "Custom prompt",
+    "customPrompt": "Type your instruction…",
+    "run": "Run",
+    "sending": "{{provider}} is generating…",
+    "proposed": "Suggested result",
+    "original": "Original",
+    "empty": "Waiting for output…",
+    "reject": "Reject",
+    "reroll": "Retry",
+    "accept": "Replace",
+    "noKey": "No API key configured for {{provider}}.",
+    "setKey": "Open AI Settings",
+    "scope": "Scope",
+    "scopeSelection": "Selection",
+    "scopeDocument": "Whole document",
+    "scopeSelectionHint": "Will process the {{count}} selected characters",
+    "scopeDocumentHint": "Will process the whole document ({{count}} characters)",
+    "scopeNoSelection": "No text selected: select some text in the document first, or use Whole document",
+    "translate": "CN ↔ EN Translation",
+    "saveAs": "Save as",
+    "noSourceFile": "The source file is not saved on disk yet; cannot save as a new file"
   }
 }

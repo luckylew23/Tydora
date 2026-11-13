@@ -35,11 +35,12 @@ export interface ExportContext {
   title: string;
 }
 
-/** 构建后的产物：content 为最终写入内容，preview* 为预览用数据 */
+/** 构建后的产物：content 为最终写入内容，preview* 为预览用数据，printHtml 为新版 PDF 打印用 */
 export interface BuiltArtifact {
   content: string | Uint8Array;
   previewHtml?: string;
   previewPng?: string;
+  printHtml?: string;
 }
 
 function sanitizeFileName(name: string): string {
@@ -73,7 +74,7 @@ export async function buildExportArtifact(format: ExportFormat, ctx: ExportConte
   }
 
   // 导出相关重库（html2canvas / jspdf / docx 等）按需加载，避免拖慢应用启动
-  const { buildHtmlDoc, buildWechatHtml, exportPdfBytes, renderToPng } = await import("./exporters");
+  const { buildHtmlDoc, buildWechatHtml, renderToPng } = await import("./exporters");
 
   // Word 导出固定使用浅色主题，避免暗色主题下文字/背景异常
   const { container, cleanup } = prepareExportElement(raw, ctx.themeName, format === "docx", ctx.title);
@@ -96,6 +97,9 @@ export async function buildExportArtifact(format: ExportFormat, ctx: ExportConte
 
     switch (format) {
       case "html":
+        // 导出的 HTML 文件同样去掉页眉右侧「创作于 Tydora」品牌角标（保留文件名）；
+        // 预览不受影响
+        raw.querySelector(".export-app-brand")?.remove();
         return {
           content: buildHtmlDoc(raw, css, ctx.themeName, ctx.title, { exportShadow: true }),
           previewHtml: htmlDoc,
@@ -111,9 +115,13 @@ export async function buildExportArtifact(format: ExportFormat, ctx: ExportConte
       }
       case "pdf": {
         replaceTaskCheckboxesWithSvg(container);
-        const bytes = await exportPdfBytes(container, bg);
-        const previewPng = await renderToPng(container, bg);
-        return { content: bytes, previewHtml: htmlDoc, previewPng };
+        // 移除页眉右侧「创作于 Tydora」品牌角标（icon + 文字），保留左侧文件名
+        // ——与 docx 路径同理，打印/PDF 不需要应用标识；预览（htmlDoc）不受影响
+        raw.querySelector(".export-app-brand")?.remove();
+        // 新版：返回自包含 HTML 用于系统打印（矢量 PDF）
+        // 旧的栅格化导出保留在 exporters.ts 中备用
+        const printHtml = buildHtmlDoc(raw, css, ctx.themeName, ctx.title, { pageBackground: previewPageBackground });
+        return { content: "", previewHtml: htmlDoc, printHtml };
       }
       case "png": {
         replaceTaskCheckboxesWithSvg(container);

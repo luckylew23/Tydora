@@ -52,6 +52,9 @@ use commands::terminal_commands::{
     spawn_terminal, write_terminal, resize_terminal, kill_terminal, TerminalManager,
 };
 use commands::font_commands::list_system_fonts;
+use commands::ai_commands::{
+    ai_rewrite, ai_cancel, ai_set_key, ai_has_key, ai_clear_key, ai_verify_key, ai_list_models,
+};
 
 struct PreviewServer(Mutex<Option<std::process::Child>>);
 
@@ -171,7 +174,12 @@ fn has_pending_files(state: State<'_, PendingFiles>) -> bool {
 /// 获取应用版本号（从 tauri.conf.json 读取，单一版本源）
 #[tauri::command]
 fn get_app_version(app: tauri::AppHandle) -> String {
-    app.package_info().version.to_string()
+    // 构建期可通过 --config {"version":"0.3.3a"} 注入本地构建后缀（a/b/c）；
+    // 官方构建无覆盖时与 Cargo 包版本一致。
+    app.config()
+        .version
+        .clone()
+        .unwrap_or_else(|| app.package_info().version.to_string())
 }
 
 // ── 欢迎仓库（新用户首次启动自动打开"Tydora 介绍"） ──────────────────
@@ -2235,7 +2243,14 @@ pub fn run() {
             write_terminal,
             resize_terminal,
             kill_terminal,
-            list_system_fonts
+            list_system_fonts,
+            ai_rewrite,
+            ai_cancel,
+            ai_set_key,
+            ai_has_key,
+            ai_clear_key,
+            ai_verify_key,
+            ai_list_models
         ])
         .setup(|app| {
             emit_boot_timing(app, "setup_begin");

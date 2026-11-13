@@ -390,6 +390,8 @@ export interface CodeMirrorEditorHandle {
    * 感知内容变化（否则替换结果不会写回缓冲、保存后丢失）。
    */
   replaceRange: (from: number, to: number, insert: string) => void;
+  /** 当前非空选区（源码偏移 + 源码文本）；collapsed 返回 null。AI 改写用。 */
+  getSelectionRange: () => { from: number; to: number; text: string } | null;
 }
 
 const highlightCompartment = new Compartment();
@@ -747,6 +749,13 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, CodeMirrorEditorProp
           selection: { anchor: a + insert.length },
         });
         view.focus();
+      },
+      getSelectionRange: () => {
+        const view = viewRef.current;
+        if (!view) return null;
+        const sel = view.state.selection.main;
+        if (sel.empty) return null;
+        return { from: sel.from, to: sel.to, text: view.state.sliceDoc(sel.from, sel.to) };
       },
       focus: () => {
         viewRef.current?.focus();
