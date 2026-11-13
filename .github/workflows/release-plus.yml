@@ -119,17 +119,19 @@ jobs:
           New-Item -ItemType Directory -Force -Path 'release-assets' | Out-Null
           $stage = 'portable-stage'
           if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item $exe (Join-Path $stage 'Tydora.exe') -Force
+          # 便携 zip 以 Tydora/ 为根目录：解压落在自己的文件夹里，
+          # 不把 exe 散在当前目录（对齐 Textus fork 的 portable 形式）。
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'Tydora') | Out-Null
+          Copy-Item $exe (Join-Path $stage 'Tydora' 'Tydora.exe') -Force
           $cliSidecar = 'app/tydora-desktop/binaries/tydora-cli-x86_64-pc-windows-msvc.exe'
           if (Test-Path $cliSidecar) {
-            Copy-Item $cliSidecar (Join-Path $stage 'tydora-cli.exe') -Force
+            Copy-Item $cliSidecar (Join-Path $stage 'Tydora' 'tydora-cli.exe') -Force
             Write-Host "portable zip includes CLI sidecar: $cliSidecar"
           } else {
             Write-Warning "CLI sidecar not found at $cliSidecar; portable zip ships without CLI"
           }
           $zip = Join-Path 'release-assets' "Tydora_${version}_x64_portable.zip"
-          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
+          Compress-Archive -Path (Join-Path $stage 'Tydora') -DestinationPath $zip -Force
           Get-Item $zip | Select-Object FullName, Length
 
       - name: Stage bundle outputs
