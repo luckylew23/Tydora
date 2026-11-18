@@ -53,7 +53,7 @@ use commands::terminal_commands::{
 };
 use commands::font_commands::list_system_fonts;
 use commands::ai_commands::{
-    ai_rewrite, ai_cancel, ai_set_key, ai_has_key, ai_clear_key, ai_verify_key, ai_list_models,
+    ai_rewrite, ai_chat, ai_cancel, ai_set_key, ai_has_key, ai_clear_key, ai_verify_key, ai_list_models,
 };
 
 struct PreviewServer(Mutex<Option<std::process::Child>>);
@@ -2250,7 +2250,8 @@ pub fn run() {
             ai_has_key,
             ai_clear_key,
             ai_verify_key,
-            ai_list_models
+            ai_list_models,
+            ai_chat
         ])
         .setup(|app| {
             emit_boot_timing(app, "setup_begin");

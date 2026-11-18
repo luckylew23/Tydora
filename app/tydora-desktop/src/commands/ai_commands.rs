@@ -812,26 +812,23 @@ pub async fn ai_rewrite(app: AppHandle, request: RewriteRequest) -> Result<Strin
 
 // --- OpenAI Chat Completions（DeepSeek 等一切兼容端点共用） ------------------
 
-async fn run_openai(
+async fn stream_openai(
     app: &AppHandle,
     request_id: &str,
-    req: &RewriteRequest,
+    base: &str,
+    model: &str,
+    messages: serde_json::Value,
     api_key: &str,
     cancel: Arc<AtomicBool>,
 ) -> Result<String, String> {
-    let base = openai_base(req.base_url.as_deref());
     let url = format!("{base}/chat/completions");
-
     let body = serde_json::json!({
-        "model": req.model,
+        "model": model,
         "stream": true,
-        "messages": [
-            {"role": "system", "content": req.system},
-            {"role": "user", "content": build_user_message(req)},
-        ],
+        "messages": messages,
     });
 
-    let client = http_client_for(&base)?;
+    let client = http_client_for(base)?;
     let resp = with_optional_bearer(client.post(&url), api_key)
         .json(&body)
         .send()
@@ -893,27 +890,39 @@ async fn run_openai(
     Ok(full)
 }
 
-// --- Ollama /api/chat NDJSON 流 ----------------------------------------------
-
-async fn run_ollama(
+async fn run_openai(
     app: &AppHandle,
     request_id: &str,
     req: &RewriteRequest,
+    api_key: &str,
     cancel: Arc<AtomicBool>,
 ) -> Result<String, String> {
-    let base = ollama_base(req.base_url.as_deref());
-    let url = format!("{base}/api/chat");
+    let base = openai_base(req.base_url.as_deref());
+    let messages = serde_json::json!([
+        {"role": "system", "content": req.system},
+        {"role": "user", "content": build_user_message(req)},
+    ]);
+    stream_openai(app, request_id, &base, &req.model, messages, api_key, cancel).await
+}
 
+// --- Ollama /api/chat NDJSON 流 ----------------------------------------------
+
+async fn stream_ollama(
+    app: &AppHandle,
+    request_id: &str,
+    base: &str,
+    model: &str,
+    messages: serde_json::Value,
+    cancel: Arc<AtomicBool>,
+) -> Result<String, String> {
+    let url = format!("{base}/api/chat");
     let body = serde_json::json!({
-        "model": req.model,
+        "model": model,
         "stream": true,
-        "messages": [
-            {"role": "system", "content": req.system},
-            {"role": "user", "content": build_user_message(req)},
-        ],
+        "messages": messages,
     });
 
-    let client = http_client_for(&base)?;
+    let client = http_client_for(base)?;
     let resp = client
         .post(&url)
         .json(&body)
@@ -966,4 +975,111 @@ async fn run_ollama(
         }
     }
     Ok(full)
+}
+
+async fn run_ollama(
+    app: &AppHandle,
+    request_id: &str,
+    req: &RewriteRequest,
+    cancel: Arc<AtomicBool>,
+) -> Result<String, String> {
+    let base = ollama_base(req.base_url.as_deref());
+    let messages = serde_json::json!([
+        {"role": "system", "content": req.system},
+        {"role": "user", "content": build_user_message(req)},
+    ]);
+    stream_ollama(app, request_id, &base, &req.model, messages, cancel).await
+}
+
+// --- 多轮群聊（右侧边栏 BrainyAI 式多模型并行对话） ---------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatMessage {
+    /// "user" | "assistant" | "system"
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatRequest {
+    /// 稳定 provider id（openai-compat / deepseek / ollama）。
+    pub provider: String,
+    /// 模型 id。
+    pub model: String,
+    /// 多轮对话历史（含本轮 user 消息）。
+    pub messages: Vec<ChatMessage>,
+    /// base URL 覆盖。空 = provider 默认。
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// 前端预铸造的 request id（群聊按 `${turnId}:${modelId}` 组装）。
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+/// 多轮流式对话：与 ai_rewrite 共用事件通道（zmd-ai-chunk/done/error），
+/// 前端按 requestId（`${turnId}:${modelId}`）路由到对应模型的回答。
+#[tauri::command]
+pub async fn ai_chat(app: AppHandle, request: ChatRequest) -> Result<String, String> {
+    let request_id = request
+        .request_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(make_request_id);
+    let cancel = register_cancel_flag(&request_id);
+    let format = wire_format(&request.provider);
+
+    let api_key = if format == "ollama" {
+        String::new()
+    } else if is_keyless_provider(&request.provider) {
+        key_read(&request.provider).unwrap_or_default()
+    } else {
+        match key_read(&request.provider) {
+            Ok(k) => k,
+            Err(e) => {
+                drop_cancel_flag(&request_id);
+                return Err(e);
+            }
+        }
+    };
+
+    let messages = serde_json::Value::Array(
+        request
+            .messages
+            .iter()
+            .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
+            .collect(),
+    );
+
+    let result = match format.as_str() {
+        "openai" => {
+            let base = openai_base(request.base_url.as_deref());
+            stream_openai(
+                &app,
+                &request_id,
+                &base,
+                &request.model,
+                messages,
+                &api_key,
+                cancel.clone(),
+            )
+            .await
+        }
+        "ollama" => {
+            let base = ollama_base(request.base_url.as_deref());
+            stream_ollama(
+                &app,
+                &request_id,
+                &base,
+                &request.model,
+                messages,
+                cancel.clone(),
+            )
+            .await
+        }
+        other => Err(format!("未知 api_format: {other}")),
+    };
+
+    drop_cancel_flag(&request_id);
+    result
 }

@@ -488,7 +488,8 @@
       "bookmarks": "书签",
       "left": "左侧栏",
       "right": "右侧栏",
-      "tags": "标签"
+      "tags": "标签",
+      "ai": "AI"
     },
     "editor": {
       "defaultMode": "默认编辑模式",

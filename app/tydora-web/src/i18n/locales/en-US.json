@@ -488,7 +488,8 @@
       "bookmarks": "Bookmarks",
       "left": "Left Sidebar",
       "right": "Right Sidebar",
-      "tags": "Tags"
+      "tags": "Tags",
+      "ai": "AI"
     },
     "editor": {
       "defaultMode": "Default Edit Mode",

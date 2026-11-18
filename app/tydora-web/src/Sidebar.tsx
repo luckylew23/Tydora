@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect, useMemo, lazy, Suspense, type ReactNode, type MouseEvent as ReactMouseEvent } from "react";
+import { SidebarChatPanel } from "./ai/SidebarChat/SidebarChatPanel";
 import { bootStart, bootEnd, bootStamp } from "./boot-timing";
 bootStamp("sidebar_module_imported");
 import { useTranslation } from "react-i18next";
@@ -56,6 +57,12 @@ const SIDEBAR_TAB_ICONS: Record<SidebarTab, ReactNode> = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
       <line x1="7" y1="7" x2="7.01" y2="7" />
+    </svg>
+  ),
+  ai: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2l1.9 5.7a2 2 0 0 0 1.3 1.3L21 11l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 20l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 11l5.8-2a2 2 0 0 0 1.3-1.3L12 2z" />
+      <path d="M19 15l.7 2.1a1 1 0 0 0 .7.7L22.5 18l-2.1.7a1 1 0 0 0-.7.7L19 21.5l-.7-2.1a1 1 0 0 0-.7-.7L15.5 18l2.1-.7a1 1 0 0 0 .7-.7L19 15z" />
     </svg>
   ),
 };
@@ -3544,6 +3551,7 @@ export default function Sidebar({
   const outlinePanelRef = useRef<HTMLDivElement>(null);
   const bookmarksPanelRef = useRef<HTMLDivElement>(null);
   const tagsPanelRef = useRef<HTMLDivElement>(null);
+  const aiPanelRef = useRef<HTMLDivElement>(null);
 
   const focusTabContent = useCallback((tab: SidebarTab, opts?: { reveal?: boolean }) => {
     switch (tab) {
@@ -3578,6 +3586,10 @@ export default function Sidebar({
         break;
       case "tags":
         tagsPanelRef.current?.focus();
+        break;
+      case "ai":
+        // AI 面板无 ref 焦点目标：聚焦输入框由面板内部处理
+        aiPanelRef.current?.focus();
         break;
     }
   }, []);
@@ -4060,6 +4072,11 @@ export default function Sidebar({
             </div>
           )}
 
+          {activeTab === "ai" && (
+            <div ref={aiPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <SidebarChatPanel docContent={content} docName={currentFilePath} />
+            </div>
+          )}
           {activeTab === "tags" && (
             <div ref={tagsPanelRef} tabIndex={-1} style={{ outline: "none", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
               {activeVault ? (

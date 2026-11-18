@@ -16,7 +16,16 @@
 2. **打印导出 PDF**：`export/pdfPrint/` 用系统打印对话框替代 html2canvas+jsPDF 位图导出。
 3. **PDF/HTML 导出移除「创作于 Tydora」品牌角标**（保留文件名）。
 4. **标题栏固定常显**：主窗口不自动隐藏（`autoHideTopbar`/`autoHideTopbarOnCollapse` 两设置在本分支不生效，设置窗口开关保留但无效）。
-5. **编辑器修复**：文件切换被残留 `isInternalRef` 吞掉（标题已切新文件、内容停留上一篇）——上游 0.3.3 既有 bug，`TipTapEditor.tsx`/`CodeMirrorEditor.tsx` 同步 effect 改为 `fileChanged` 无条件优先。
+5. **右侧边栏 AI 群聊**（对照移植 BrainyAI 侧边栏）：多模型并行对话 + 引用当前文档。
+6. **编辑器修复**：文件切换被残留 `isInternalRef` 吞掉（标题已切新文件、内容停留上一篇）——上游 0.3.3 既有 bug，`TipTapEditor.tsx`/`CodeMirrorEditor.tsx` 同步 effect 改为 `fileChanged` 无条件优先。
+
+### 右侧边栏 AI 群聊（`ai/SidebarChat/`）
+
+- 侧栏新页签 `ai`（`SidebarTab` 类型 / `ALL_SIDEBAR_TABS` / 默认 placement=right，可在设置里左右分配）。
+- `chatStore.ts`：**模块级单例**状态（不用组件 state）——流式与历史跨组件生命周期存活（切页签/折叠侧栏不中断）；chunk/done/error 事件监听也注册在模块级。持久化 `zmd-ai-chats`（会话）/ `zmd-ai-chat-models`（模型条目）。
+- `SidebarChatPanel.tsx`：BrainyAI 式群聊——勾选 N 个模型并行发问（requestId=`${turnId}:${modelId}`），每轮按模型 tab 切换回答；「引用当前文档」把当前笔记全文注入该轮上下文；模型条目（provider+model+baseUrl）面板内增删。
+- Rust 新增 `ai_chat` 命令（多轮 `messages` 数组流式），与 `ai_rewrite` 共享提取出的 `stream_openai`/`stream_ollama` 循环。
+- **群聊上下文语义**：每个模型的 assistant 历史只取**它自己**的轮次回答（多模型互不串台）；「引用文档」只在发起那一轮注入全文，后续轮靠历史延续。
 
 ## AI 助手架构
 

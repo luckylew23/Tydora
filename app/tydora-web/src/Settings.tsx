@@ -106,7 +106,7 @@ export function loadEditorSettings(): EditorSettings {
 /** 代码块工具栏样式：minimal = 右上角浮动语言选择；classic = 顶栏 + 复制/删除 */
 export type CodeBlockToolbarStyle = "minimal" | "classic";
 
-export type SidebarTab = "files" | "search" | "outline" | "bookmarks" | "tags";
+export type SidebarTab = "files" | "search" | "outline" | "bookmarks" | "tags" | "ai";
 export type SidebarSide = "left" | "right";
 export type SidebarTabPlacement = Record<SidebarTab, SidebarSide>;
 
@@ -176,6 +176,7 @@ export const DEFAULT_GENERAL: GeneralSettings = {
     outline: "right",
     bookmarks: "left",
     tags: "right",
+    ai: "right",
   },
   showFileIcons: true,
 };
@@ -228,7 +229,7 @@ const shortcutRecordingRef = { current: false };
 export const TOGGLE_SIDEBAR_EVENT = "tydora:toggle-sidebar";
 export const TOGGLE_RIGHT_SIDEBAR_EVENT = "tydora:toggle-right-sidebar";
 
-const ALL_SIDEBAR_TABS: SidebarTab[] = ["files", "search", "outline", "bookmarks", "tags"];
+const ALL_SIDEBAR_TABS: SidebarTab[] = ["files", "search", "outline", "bookmarks", "tags", "ai"];
 
 function normalizeSidebarTabPlacement(raw: unknown): SidebarTabPlacement {
   const base = { ...DEFAULT_GENERAL.sidebarTabPlacement };
@@ -708,6 +709,12 @@ function GeneralSettingsContent({
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
                         <line x1="7" y1="7" x2="7.01" y2="7" />
+                      </svg>
+                    )}
+                    {tab === "ai" && (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2l1.9 5.7a2 2 0 0 0 1.3 1.3L21 11l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 20l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 11l5.8-2a2 2 0 0 0 1.3-1.3L12 2z" />
+                        <path d="M19 15l.7 2.1a1 1 0 0 0 .7.7L22.5 18l-2.1.7a1 1 0 0 0-.7.7L19 21.5l-.7-2.1a1 1 0 0 0-.7-.7L15.5 18l2.1-.7a1 1 0 0 0 .7-.7L19 15z" />
                       </svg>
                     )}
                   </div>
