@@ -655,14 +655,6 @@ fn build_user_message(req: &RewriteRequest) -> String {
     format!("{}\n\nText:\n{}", req.user, req.selection)
 }
 
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(180))
-        .connect_timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| format!("HTTP 客户端初始化失败: {e}"))
-}
-
 /// 目标是否为本机回环地址。回环请求走系统/环境代理毫无意义且常被代理
 /// 工具劫持：reqwest 0.12.5+ 默认读取 Windows 系统代理（注册表），Clash
 /// 类工具开着系统代理时 127.0.0.1 请求会被塞进代理端口而失败——这正是

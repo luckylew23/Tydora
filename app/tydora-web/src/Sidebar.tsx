@@ -4096,15 +4096,18 @@ export default function Sidebar({
         </>
       )}
 
-      <VaultSwitcher
-        vaults={vaults}
-        activeIndex={activeVaultIndex}
-        onRemove={onRemoveVault}
-        onOpenNewVault={onOpenNewVault}
-        onSelectVault={onSelectVault}
-        onManageVaults={onManageVaults}
-        onOpenSettings={onOpenSettings}
-      />
+      {/* 仓库切换器与设置入口只放左侧栏底部；右侧栏（AI 群聊等）不重复出现 */}
+      {side !== "right" && (
+        <VaultSwitcher
+          vaults={vaults}
+          activeIndex={activeVaultIndex}
+          onRemove={onRemoveVault}
+          onOpenNewVault={onOpenNewVault}
+          onSelectVault={onSelectVault}
+          onManageVaults={onManageVaults}
+          onOpenSettings={onOpenSettings}
+        />
+      )}
 
       {!collapsed && (
         <div className="sidebar-resize-handle" onMouseDown={handleMouseDown} />
