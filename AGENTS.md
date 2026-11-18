@@ -6,7 +6,7 @@
 ## 分支与同步
 
 - **main**：跟随上游，当前仅领先 1 个提交 `aae3160`（编辑器文件切换修复，经用户确认 cherry-pick 进 main）。
-- **tydora-plus**：个性化定制线，领先 main 9 个提交（打印导出 ×2、打印权限、AI 助手、CI 流水线 ×4、AI 代理修复、标题栏常显）。个人定制**只提交到此分支**；main 不回吸收定制（否则上游同步冲突成本高）。
+- **tydora-plus**：个性化定制线，领先 main 若干提交（精确数用 `git rev-list --count main..tydora-plus`）：打印导出 ×2、打印权限、AI 助手、CI 流水线、AI 代理修复、标题栏常显、AI 群聊侧栏、AGENTS.md。个人定制**只提交到此分支**；main 不回吸收定制（否则上游同步冲突成本高）。
 - 同步上游：`git fetch upstream && git checkout main && git merge upstream/main`，再到 plus `git merge main`。上游改动触及 `App.tsx`/`Editor/`/locales 时需手动解冲突。
 - ⚠️ gh 对 fork 默认解析到父仓库 zuorn：凡查/建本 fork 的 release/tag/pr，命令必须带 `-R luckylew23/Tydora`。
 
